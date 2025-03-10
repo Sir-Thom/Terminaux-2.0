@@ -1,0 +1,367 @@
+use std::{
+    io::{self, Write},
+    os::unix::io::AsRawFd,
+    process,
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration
+};
+use crossterm::{
+    cursor::{Hide, MoveTo, Show},
+    event::{poll, read, Event, KeyCode, KeyModifiers},
+    execute,
+    style::{Attribute, Color, SetAttribute, SetBackgroundColor, SetForegroundColor},
+    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+    QueueableCommand
+};
+use crossterm::event::KeyEvent;
+use nix::{
+    libc::{ioctl, TIOCSWINSZ, STDOUT_FILENO, SIGWINCH, STDIN_FILENO, TIOCSCTTY},
+    pty::{openpty, Winsize},
+    sys::{
+        signal,
+        termios::{self, SetArg},
+        wait::waitpid,
+    },
+    unistd::{dup2, execvp, fork, setsid, ForkResult, Pid},
+};
+use vte::{Parser, Perform};
+
+#[derive(Debug, Clone)]
+struct TerminalState {
+    cursor_x: u16,
+    cursor_y: u16,
+    rows: u16,
+    cols: u16,
+    fg_color: Color,
+    bg_color: Color,
+    attributes: Vec<Attribute>,
+    buffer: Vec<Vec<char>>,
+}
+
+impl TerminalState {
+    fn new(rows: u16, cols: u16) -> Self {
+        TerminalState {
+            rows,
+            cols,
+            cursor_x: 0,
+            cursor_y: 0,
+            fg_color: Color::Reset,
+            bg_color: Color::Reset,
+            attributes: Vec::new(),
+            buffer: vec![vec![' '; cols as usize]; rows as usize],
+        }
+    }
+
+    fn resize(&mut self, rows: u16, cols: u16) {
+        self.rows = rows;
+        self.cols = cols;
+        self.buffer.resize(rows as usize, vec![' '; cols as usize]);
+        for row in &mut self.buffer {
+            row.resize(cols as usize, ' ');
+        }
+    }
+}
+
+struct TerminalHandler {
+    state: Arc<Mutex<TerminalState>>,
+}
+
+impl Perform for TerminalHandler {
+    fn print(&mut self, c: char) {
+        let mut state = self.state.lock().unwrap();
+        let cols = state.cols;
+        if state.cursor_x >= cols {
+            state.cursor_x = 0;
+            state.cursor_y += 1;
+        }
+
+        if state.cursor_y >= state.rows {
+            state.buffer.remove(0);
+            state.buffer.push(vec![' '; cols as usize]);
+            state.cursor_y = state.rows - 1;
+        }
+
+        let x = state.cursor_x as usize;
+        let y = state.cursor_y as usize;
+        if x < cols as usize && y < state.rows as usize {
+            state.buffer[y][x] = c;
+        }
+
+        state.cursor_x += 1;
+    }
+
+    fn execute(&mut self, byte: u8) {
+        let mut state = self.state.lock().unwrap();
+        match byte {
+            0x0A => state.cursor_y += 1, // LF
+            0x0D => state.cursor_x = 0,  // CR
+            0x08 => state.cursor_x = state.cursor_x.saturating_sub(1),
+            0x09 => state.cursor_x = (state.cursor_x + 8) & !7,
+            _ => {}
+        }
+
+        if state.cursor_y >= state.rows {
+            let cols = state.cols;
+            state.buffer.remove(0);
+            state.buffer.push(vec![' '; cols as usize]);
+            state.cursor_y = state.rows - 1;
+        }
+    }
+
+    fn csi_dispatch(&mut self, params: &vte::Params, _: &[u8], _: bool, c: char) {
+        let mut state = self.state.lock().unwrap();
+        match c {
+            'H' | 'f' => {
+                let row = params.iter()
+                    .nth(0)
+                    .and_then(|g| g.first())
+                    .copied()
+                    .unwrap_or(1)
+                    .saturating_sub(1) as u16;
+                let col = params.iter()
+                    .nth(1)
+                    .and_then(|g| g.first())
+                    .copied()
+                    .unwrap_or(1)
+                    .saturating_sub(1) as u16;
+                state.cursor_x = col.min(state.cols - 1);
+                state.cursor_y = row.min(state.rows - 1);
+            },
+            'm' => self.handle_sgr(params),
+            'J' => self.handle_clear_screen(params),
+            'K' => self.handle_clear_line(params),
+            _ => {}
+        }
+    }
+}
+
+impl TerminalHandler {
+    fn handle_sgr(&self, params: &vte::Params) {
+        let mut state = self.state.lock().unwrap();
+        for param in params.iter().flat_map(|p| p.iter()) {
+            match param {
+                0 => {
+                    state.fg_color = Color::Reset;
+                    state.bg_color = Color::Reset;
+                    state.attributes.clear();
+                },
+                30..=37 => state.fg_color = Color::AnsiValue((param - 30) as u8),
+                40..=47 => state.bg_color = Color::AnsiValue((param - 40) as u8),
+                38 | 48 => {}
+                1 => state.attributes.push(Attribute::Bold),
+                4 => state.attributes.push(Attribute::Underlined),
+                7 => state.attributes.push(Attribute::Reverse),
+                _ => {}
+            }
+        }
+    }
+
+    fn handle_clear_screen(&self, params: &vte::Params) {
+        let mut state = self.state.lock().unwrap();
+        let mode = params.iter()
+            .next()
+            .and_then(|group| group.first())
+            .copied()
+            .unwrap_or(0);
+
+        match mode {
+            0 => {
+                for y in state.cursor_y..state.rows {
+                    state.buffer[y as usize].fill(' ');
+                }
+            },
+            1 => {
+                for y in 0..=state.cursor_y {
+                    state.buffer[y as usize].fill(' ');
+                }
+            },
+            2 => {
+                state.buffer.iter_mut().for_each(|row| row.fill(' '));
+            },
+            _ => {}
+        }
+    }
+
+    fn handle_clear_line(&self, params: &vte::Params) {
+        let mut state = self.state.lock().unwrap();
+        let mode = params.iter()
+            .next()
+            .and_then(|group| group.first())
+            .copied()
+            .unwrap_or(0);
+        let y = state.cursor_y as usize;
+
+        match mode {
+            0 => {
+                for x in state.cursor_x..state.cols {
+                    state.buffer[y][x as usize] = ' ';
+                }
+            },
+            1 => {
+                for x in 0..=state.cursor_x {
+                    state.buffer[y][x as usize] = ' ';
+                }
+            },
+            2 => {
+                state.buffer[y].fill(' ');
+            },
+            _ => {}
+        }
+    }
+}
+
+fn main() -> io::Result<()> {
+    let winsize = Winsize {
+        ws_row: 24,
+        ws_col: 80,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+
+    let pty = openpty(Some(&winsize), None)?;
+
+    unsafe {
+        match fork()? {
+            ForkResult::Parent { child } => {
+                let state = Arc::new(Mutex::new(TerminalState::new(24, 80)));
+                let mut handler = TerminalHandler { state: Arc::clone(&state) };
+                let mut parser = Parser::new();
+
+                enable_raw_mode()?;
+                let mut stdout = io::stdout();
+                execute!(stdout, EnterAlternateScreen, Hide)?;
+
+                // Input handling thread
+                let master = pty.master;
+                thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    loop {
+                        let bytes_read = unsafe {
+                            libc::read(master, buf.as_mut_ptr() as *mut _, buf.len())
+                        };
+                        if bytes_read > 0 {
+                            for byte in &buf[..bytes_read as usize] {
+                                parser.advance(&mut handler, &[*byte]);
+                            }
+                        }
+                    }
+                });
+
+                // Signal handling
+                unsafe {
+                    signal::signal(signal::Signal::SIGWINCH, signal::SigHandler::Handler(handle_sigwinch))
+                        .expect("Failed to set SIGWINCH handler");
+                }
+
+                // Main loop
+                loop {
+                    if poll(Duration::from_millis(16))? {
+                        if let Event::Key(event) = read()? {
+                            handle_key(event, pty.master);
+                        }
+                    }
+
+                    let state = state.lock().unwrap();
+                    render(&state, &mut stdout)?;
+
+                    match waitpid(child, None) {
+                        Ok(_) => break,
+                        Err(_) => break,
+                    }
+                }
+
+                disable_raw_mode()?;
+                execute!(stdout, Show, LeaveAlternateScreen)?;
+                Ok(())
+            },
+            ForkResult::Child => {
+                setsid().expect("Failed to create new session");
+                unsafe {
+                    // Force setting the controlling terminal with the third argument as 1
+                    ioctl(pty.slave, TIOCSCTTY, 1);
+                }
+
+                // Set the TERM environment variable
+                std::env::set_var("TERM", "xterm-256color");
+
+
+                let mut termios = termios::tcgetattr(pty.slave).expect("Failed to get termios");
+                termios.local_flags |= termios::LocalFlags::IEXTEN
+                    | termios::LocalFlags::ISIG
+                    | termios::LocalFlags::ICANON
+                    | termios::LocalFlags::ECHO;
+                termios.input_flags |= termios::InputFlags::ICRNL
+                    | termios::InputFlags::IXON;
+                termios.output_flags |= termios::OutputFlags::OPOST
+                    | termios::OutputFlags::ONLCR;
+                termios::tcsetattr(pty.slave, SetArg::TCSANOW, &termios)
+                    .expect("Failed to set termios");
+
+                dup2(pty.slave, 0).expect("dup2 stdin failed");
+                dup2(pty.slave, 1).expect("dup2 stdout failed");
+                dup2(pty.slave, 2).expect("dup2 stderr failed");
+                eprint!("termios: {:?}", termios.local_flags);
+
+                let shell_path = std::ffi::CString::new("/bin/bash").unwrap();
+                let arg0 = std::ffi::CString::new("-bash").unwrap(); // Note the '-' to indicate login shell
+                execvp(&shell_path, &[arg0]).expect("execvp failed");
+                process::exit(0);
+
+            }
+        }
+    }
+}
+
+extern "C" fn handle_sigwinch(_: libc::c_int) {
+    // Handle window size changes
+}
+
+fn handle_key(event: KeyEvent, master: i32) {
+    let bytes = match (event.modifiers, event.code) {
+        (KeyModifiers::CONTROL, KeyCode::Char('c')) => vec![0x03],
+        (KeyModifiers::CONTROL, KeyCode::Char('l')) => vec![0x0c],
+        (_, KeyCode::Enter) => vec![b'\r'],
+        (_, KeyCode::Up) => b"\x1b[A".to_vec(),
+        (_, KeyCode::Down) => b"\x1b[B".to_vec(),
+        (_, KeyCode::Right) => b"\x1b[C".to_vec(),
+        (_, KeyCode::Left) => b"\x1b[D".to_vec(),
+        (KeyModifiers::CONTROL, KeyCode::Char(c)) => vec![c as u8 - b'a' + 1],
+        (_, KeyCode::Char(c)) => vec![c as u8],
+        (_, KeyCode::Backspace) => vec![0x7f],
+        (_, KeyCode::Tab) => vec![b'\t'],
+        (_, KeyCode::Esc) => vec![0x1b],
+        _ => vec![],
+    };
+
+    unsafe {
+        libc::write(master, bytes.as_ptr() as *const _, bytes.len());
+    }
+}
+
+fn render(state: &TerminalState, stdout: &mut impl Write) -> io::Result<()> {
+    stdout.queue(Clear(ClearType::All))?;
+
+    for (y, row) in state.buffer.iter().enumerate() {
+        stdout.queue(MoveTo(0, y as u16))?;
+        for (x, &c) in row.iter().enumerate() {
+            if x < state.cols as usize && y < state.rows as usize {
+                stdout
+                    .queue(SetForegroundColor(state.fg_color))?
+                    .queue(SetBackgroundColor(state.bg_color))?;
+
+                for attr in &state.attributes {
+                    stdout.queue(SetAttribute(*attr))?;
+                }
+
+                write!(stdout, "{}", c)?;
+            }
+        }
+    }
+
+    stdout
+        .queue(MoveTo(state.cursor_x, state.cursor_y))?
+        .queue(SetForegroundColor(state.fg_color))?
+        .queue(SetBackgroundColor(state.bg_color))?
+        .flush()
+}

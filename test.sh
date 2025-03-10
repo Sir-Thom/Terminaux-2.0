@@ -1,0 +1,1 @@
+echo -e "\x1b[38;2;255;0;0mTruecolor Test\x1b[0m"
