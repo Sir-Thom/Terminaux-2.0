@@ -57,32 +57,6 @@ impl SelectGraphicRendition {
             35 => SelectGraphicRendition::ForegroundMagenta,
             36 => SelectGraphicRendition::ForegroundCyan,
             37 => SelectGraphicRendition::ForegroundWhite,
-
-            40 => SelectGraphicRendition::BackgroundBlack,
-            41 => SelectGraphicRendition::BackgroundRed,
-            42 => SelectGraphicRendition::BackgroundGreen,
-            43 => SelectGraphicRendition::BackgroundYellow,
-            44 => SelectGraphicRendition::BackgroundBlue,
-            45 => SelectGraphicRendition::BackgroundMagenta,
-            46 => SelectGraphicRendition::BackgroundCyan,
-            47 => SelectGraphicRendition::BackgroundWhite,
-
-            90 => SelectGraphicRendition::ForegroundBrightBlack,
-            91 => SelectGraphicRendition::ForegroundBrightRed,
-            92 => SelectGraphicRendition::ForegroundBrightGreen,
-            93 => SelectGraphicRendition::ForegroundBrightYellow,
-            94 => SelectGraphicRendition::ForegroundBrightBlue,
-            95 => SelectGraphicRendition::ForegroundBrightMagenta,
-            96 => SelectGraphicRendition::ForegroundBrightCyan,
-            97 => SelectGraphicRendition::ForegroundBrightWhite,
-            100 => SelectGraphicRendition::BackgroundBrightBlack,
-            101 => SelectGraphicRendition::BackgroundBrightRed,
-            102 => SelectGraphicRendition::BackgroundBrightGreen,
-            103 => SelectGraphicRendition::BackgroundBrightYellow,
-            104 => SelectGraphicRendition::BackgroundBrightBlue,
-            105 => SelectGraphicRendition::BackgroundBrightMagenta,
-            106 => SelectGraphicRendition::BackgroundBrightCyan,
-            107 => SelectGraphicRendition::BackgroundBrightWhite,
             38 => {
                 if params.len() >= 2 {
                     match params[0] {
@@ -93,7 +67,7 @@ impl SelectGraphicRendition {
                             }
                         }
                         Some(2) => {
-                            // 24-bit true color: \x1b[38;2;<r>;<g>;<b>m
+                            // True color: \x1b[38;2;<r>;<g>;<b>m
                             if params.len() >= 4 {
                                 let r = params[1].unwrap_or(0) as u8;
                                 let g = params[2].unwrap_or(0) as u8;
@@ -104,8 +78,17 @@ impl SelectGraphicRendition {
                         _ => {}
                     }
                 }
+                // Fallback if parameters are invalid
                 SelectGraphicRendition::Unknown(val)
             }
+            40 => SelectGraphicRendition::BackgroundBlack,
+            41 => SelectGraphicRendition::BackgroundRed,
+            42 => SelectGraphicRendition::BackgroundGreen,
+            43 => SelectGraphicRendition::BackgroundYellow,
+            44 => SelectGraphicRendition::BackgroundBlue,
+            45 => SelectGraphicRendition::BackgroundMagenta,
+            46 => SelectGraphicRendition::BackgroundCyan,
+            47 => SelectGraphicRendition::BackgroundWhite,
             48 => {
                 // Similar logic for background colors
                 if params.len() >= 2 {
@@ -128,6 +111,24 @@ impl SelectGraphicRendition {
                 }
                 SelectGraphicRendition::Unknown(val)
             }
+            90 => SelectGraphicRendition::ForegroundBrightBlack,
+            91 => SelectGraphicRendition::ForegroundBrightRed,
+            92 => SelectGraphicRendition::ForegroundBrightGreen,
+            93 => SelectGraphicRendition::ForegroundBrightYellow,
+            94 => SelectGraphicRendition::ForegroundBrightBlue,
+            95 => SelectGraphicRendition::ForegroundBrightMagenta,
+            96 => SelectGraphicRendition::ForegroundBrightCyan,
+            97 => SelectGraphicRendition::ForegroundBrightWhite,
+            100 => SelectGraphicRendition::BackgroundBrightBlack,
+            101 => SelectGraphicRendition::BackgroundBrightRed,
+            102 => SelectGraphicRendition::BackgroundBrightGreen,
+            103 => SelectGraphicRendition::BackgroundBrightYellow,
+            104 => SelectGraphicRendition::BackgroundBrightBlue,
+            105 => SelectGraphicRendition::BackgroundBrightMagenta,
+            106 => SelectGraphicRendition::BackgroundBrightCyan,
+            107 => SelectGraphicRendition::BackgroundBrightWhite,
+
+
             _ => SelectGraphicRendition::Unknown(val),
         }
     }
@@ -142,6 +143,7 @@ pub enum TerminalOutput {
     Sgr(SelectGraphicRendition),
     Data(Vec<u8>),
     Invalid,
+    //SetCursorVisibility(bool),
 }
 
 enum CsiParserState {
@@ -178,12 +180,11 @@ fn split_params_into_semicolon_delimited_usize(params: &[u8]) -> Result<Vec<Opti
 }
 
 fn parse_param_as_usize(param_bytes: &[u8]) -> Result<Option<usize>, ()> {
-    let param_str =
-        std::str::from_utf8(param_bytes).expect("parameter should always be valid utf8");
+    let param_str = std::str::from_utf8(param_bytes).expect("valid utf8");
     if param_str.is_empty() {
         return Ok(None);
     }
-    let param = param_str.parse().map_err(|_| ())?;
+    let param = param_str.parse().map_err(|_| ())?; // Valid use of `?`
     Ok(Some(param))
 }
 
@@ -313,6 +314,7 @@ impl AnsiParser {
                             });
                             self.inner = AnsiParserInner::Empty;
                         }
+
                         CsiParserState::Finished(b'G') => {
                             let Ok(param) = parse_param_as_usize(&parser.params) else {
                                 println!("Invalid cursor set position sequence");
@@ -347,39 +349,85 @@ impl AnsiParser {
                             self.inner = AnsiParserInner::Empty;
                         }
                         CsiParserState::Finished(b'm') => {
-                            let params =
-                                split_params_into_semicolon_delimited_usize(&parser.params);
-
-                            let Ok(mut params) = params else {
-                                println!("Invalid SGR sequence");
-                                output.push(TerminalOutput::Invalid);
-                                self.inner = AnsiParserInner::Empty;
-                                continue;
+                            let params = match split_params_into_semicolon_delimited_usize(&parser.params) {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    output.push(TerminalOutput::Invalid);
+                                    self.inner = AnsiParserInner::Empty;
+                                    continue;
+                                }
                             };
 
-                            if params.is_empty() {
-                                params.push(Some(0));
-                            }
-
-                            if params.len() == 1 && params[0].is_none() {
-                                params[0] = Some(0);
-                            }
-
-                            for param in &params {
-                                let Some(param) = param else {
-                                    continue;
+                            let mut i = 0;
+                            while i < params.len() {
+                                let code = params[i].unwrap_or(0);
+                                let sgr = match code {
+                                    38 | 48 => {
+                                        // Handle multi-parameter codes (foreground/background)
+                                        if i + 1 >= params.len() {
+                                            SelectGraphicRendition::Unknown(code)
+                                        } else {
+                                            let subcode = params[i + 1].unwrap_or(0);
+                                            match (code, subcode) {
+                                                (38, 5) => {
+                                                    // 8-bit foreground
+                                                    if i + 2 < params.len() {
+                                                        let n = params[i + 2].unwrap_or(0) as u8;
+                                                        i += 2;
+                                                        SelectGraphicRendition::Foreground8Bit(n)
+                                                    } else {
+                                                        SelectGraphicRendition::Unknown(code)
+                                                    }
+                                                }
+                                                (38, 2) => {
+                                                    // True color foreground
+                                                    if i + 4 < params.len() {
+                                                        let r = params[i + 2].unwrap_or(0) as u8;
+                                                        let g = params[i + 3].unwrap_or(0) as u8;
+                                                        let b = params[i + 4].unwrap_or(0) as u8;
+                                                        i += 4;
+                                                        SelectGraphicRendition::ForegroundTrueColor(r, g, b)
+                                                    } else {
+                                                        SelectGraphicRendition::Unknown(code)
+                                                    }
+                                                }
+                                                (48, 5) => {
+                                                    // 8-bit background
+                                                    if i + 2 < params.len() {
+                                                        let n = params[i + 2].unwrap_or(0) as u8;
+                                                        i += 2;
+                                                        SelectGraphicRendition::Background8Bit(n)
+                                                    } else {
+                                                        SelectGraphicRendition::Unknown(code)
+                                                    }
+                                                }
+                                                (48, 2) => {
+                                                    // True color background
+                                                    if i + 4 < params.len() {
+                                                        let r = params[i + 2].unwrap_or(0) as u8;
+                                                        let g = params[i + 3].unwrap_or(0) as u8;
+                                                        let b = params[i + 4].unwrap_or(0) as u8;
+                                                        i += 4;
+                                                        SelectGraphicRendition::BackgroundTrueColor(r, g, b)
+                                                    } else {
+                                                        SelectGraphicRendition::Unknown(code)
+                                                    }
+                                                }
+                                                _ => SelectGraphicRendition::Unknown(code),
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        // Handle single-parameter codes (e.g., 1 = Bold, 31 = Red)
+                                        SelectGraphicRendition::from_usize(code, &params)
+                                    }
                                 };
-                                output.push(TerminalOutput::Sgr(
-                                    SelectGraphicRendition::
-
-
-
-                                    from_usize(*param, &params),
-                                ));
+                                output.push(TerminalOutput::Sgr(sgr));
+                                i += 1;
                             }
-
                             self.inner = AnsiParserInner::Empty;
                         }
+
                         CsiParserState::Finished(b'A') => {
                             // Handle Cursor Up
                             let Ok(param) = parse_param_as_usize(&parser.params) else {
@@ -603,6 +651,17 @@ mod test {
             test_input.push('a');
         }
 
+        for i in 40..=47 {
+            test_input.push_str(&ColorCode(i).to_string());
+            test_input.push('a');
+        }
+
+        for i in 100..=107 {
+            test_input.push_str(&ColorCode(i).to_string());
+            test_input.push('a');
+        }
+
+
         let output = output_buffer.push(test_input.as_bytes());
         assert_eq!(
             output,
@@ -639,7 +698,58 @@ mod test {
                 TerminalOutput::Data(b"a".into()),
                 TerminalOutput::Sgr(SelectGraphicRendition::ForegroundBrightWhite),
                 TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundBlack),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundRed),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundGreen),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundYellow),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundBlue),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundMagenta),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundCyan),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundWhite),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundBrightBlack),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundBrightRed),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundBrightGreen),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundBrightYellow),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundBrightBlue),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundBrightMagenta),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundBrightCyan),
+                TerminalOutput::Data(b"a".into()),
+                TerminalOutput::Sgr(SelectGraphicRendition::BackgroundBrightWhite),
+                TerminalOutput::Data(b"a".into()),
+
             ]
         );
+    }
+    #[test]
+    fn test_true_color_parsing() {
+        let mut output_buffer = AnsiParser::new();
+
+        // Test foreground true color
+        let parsed = output_buffer.push(b"\x1b[38;2;255;128;0m");
+        assert!(matches!(
+        parsed[0],
+        TerminalOutput::Sgr(SelectGraphicRendition::ForegroundTrueColor(255, 128, 0))
+    ));
+
+        // Test background true color
+        let parsed = output_buffer.push(b"\x1b[48;2;0;255;128m");
+        assert!(matches!(
+        parsed[0],
+        TerminalOutput::Sgr(SelectGraphicRendition::BackgroundTrueColor(0, 255, 128))
+    ));
     }
 }

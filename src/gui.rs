@@ -5,7 +5,7 @@ use eframe::egui::{
     Rect, TextStyle, Ui,
 };
 
-const REGULAR_FONT_NAME: &str = "hack";
+const REGULAR_FONT_NAME: &str = "JetBrains MonO";
 const BOLD_FONT_NAME: &str = "hack-bold";
 
 fn write_input_to_terminal(input: &InputState, terminal_emulator: &mut TerminalEmulator) {
@@ -71,8 +71,9 @@ fn paint_cursor(
     //make it blink by adding a delay
     painter.rect_filled(
         Rect::from_min_size(
-            egui::pos2(left + cursor_offset.0, bottom + cursor_offset.1),
+            egui::pos2(left + cursor_offset.0 - 1.0, bottom + cursor_offset.1),
             egui::vec2(character_size.0, character_size.1),
+
         ),
         0.0,
         Color32::GRAY,
@@ -197,7 +198,7 @@ impl eframe::App for TermieGui {
 
                         _ => default_color
                     };
-                    println!("{:?}", textformat.color);
+                    //println!("{:?}", textformat.color);
 
 
                     job.sections.push(egui::text::LayoutSection {
