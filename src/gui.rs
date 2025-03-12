@@ -1,12 +1,12 @@
 use std::sync::Arc;
-use crate::terminal_emulator::{CursorState, TerminalColor, TerminalEmulator};
+use crate::terminal_emulator::{cursor_to_buffer_position, CursorState, TerminalColor, TerminalEmulator};
 use eframe::egui::{
     self, CentralPanel, Color32, Event, FontData, FontDefinitions, FontFamily, InputState, Key,
     Rect, TextStyle, Ui,
 };
 
-const REGULAR_FONT_NAME: &str = "JetBrains MonO";
-const BOLD_FONT_NAME: &str = "hack-bold";
+const REGULAR_FONT_NAME: &str = "JetBrainsMono-Regular";
+const BOLD_FONT_NAME: &str = "JetBrainsMono-Bold";
 
 fn write_input_to_terminal(input: &InputState, terminal_emulator: &mut TerminalEmulator) {
     for event in &input.events {
@@ -88,12 +88,12 @@ fn setup_fonts(ctx: &egui::Context) {
 
     fonts.font_data.insert(
         REGULAR_FONT_NAME.to_owned(),
-        Arc::from(FontData::from_static(include_bytes!("../res/Hack-Regular.ttf"))),
+        Arc::from(FontData::from_static(include_bytes!("../res/JetBrainsMono-Regular.ttf"))),
     );
 
     fonts.font_data.insert(
         BOLD_FONT_NAME.to_owned(),
-        Arc::from(FontData::from_static(include_bytes!("../res/Hack-Bold.ttf"))),
+        Arc::from(FontData::from_static(include_bytes!("../res/JetBrainsMono-Bold.ttf"))),
     );
 
     fonts
@@ -179,27 +179,43 @@ impl eframe::App for TermieGui {
 
                     textformat.color = match color {
                         TerminalColor::Default => default_color,
-                        TerminalColor::Black => Color32::BLACK,
-                        TerminalColor::Red => Color32::RED,
-                        TerminalColor::Green => Color32::GREEN,
-                        TerminalColor::Yellow => Color32::YELLOW,
-                        TerminalColor::Blue => Color32::BLUE,
-                        TerminalColor::Magenta => Color32::from_rgb(255, 0, 255),
-                        TerminalColor::Cyan => Color32::from_rgb(0, 255, 255),
-                        TerminalColor::White => Color32::WHITE,
-                        TerminalColor::BrightRed => Color32::from_rgb(255, 0, 0),
-                        TerminalColor::BrightGreen => Color32::from_rgb(0, 255, 0),
-                        TerminalColor::BrightYellow => Color32::from_rgb(255, 255, 0),
-                        TerminalColor::BrightBlue => Color32::from_rgb(0, 0, 255),
-                        TerminalColor::BrightMagenta => Color32::from_rgb(255, 0, 255),
-                        TerminalColor::BrightCyan => Color32::from_rgb(0, 255, 255),
-                        TerminalColor::BrightWhite => Color32::from_rgb(255, 255, 255),
-                        TerminalColor::Rgb(r, g, b) => Color32::from_rgb(r, g, b),
-
-                        _ => default_color
+                        TerminalColor::ForegroundBlack => Color32::BLACK,
+                        TerminalColor::ForegroundRed => Color32::RED,
+                        TerminalColor::ForegroundGreen => Color32::GREEN,
+                        TerminalColor::ForegroundYellow => Color32::YELLOW,
+                        TerminalColor::ForegroundBlue => Color32::BLUE,
+                        TerminalColor::ForegroundMagenta => Color32::from_rgb(255, 0, 255),
+                        TerminalColor::ForegroundCyan => Color32::from_rgb(0, 255, 255),
+                        TerminalColor::ForegroundWhite => Color32::WHITE,
+                        TerminalColor::ForegroundBrightRed => Color32::from_rgb(255, 0, 0),
+                        TerminalColor::ForegroundBrightGreen => Color32::from_rgb(0, 255, 0),
+                        TerminalColor::ForegroundBrightYellow => Color32::from_rgb(255, 255, 0),
+                        TerminalColor::ForegroundBrightBlue => Color32::from_rgb(0, 0, 255),
+                        TerminalColor::ForegroundBrightMagenta => Color32::from_rgb(255, 0, 255),
+                        TerminalColor::ForegroundBrightCyan => Color32::from_rgb(0, 255, 255),
+                        TerminalColor::ForegroundBrightWhite => Color32::from_rgb(255, 255, 255),
+                        TerminalColor::ForegroundRgb(r, g, b) => Color32::from_rgb(r, g, b),
+                        _ => default_color,
                     };
-                    //println!("{:?}", textformat.color);
-
+                    textformat.background = match color {
+                        TerminalColor::BackgroundRgb(r, g, b) => Color32::from_rgb(r, g, b),
+                        TerminalColor::BackgroundBlack => Color32::BLACK,
+                        TerminalColor::BackgroundRed => Color32::RED,
+                        TerminalColor::BackgroundGreen => Color32::GREEN,
+                        TerminalColor::BackgroundYellow => Color32::YELLOW,
+                        TerminalColor::BackgroundBlue => Color32::BLUE,
+                        TerminalColor::BackgroundMagenta => Color32::from_rgb(255, 0, 0),
+                        TerminalColor::BackgroundCyan => Color32::from_rgb(0, 255, 0),
+                        TerminalColor::BackgroundWhite => Color32::WHITE,
+                        TerminalColor::BackgroundBrightRed => Color32::from_rgb(255, 0, 0),
+                        TerminalColor::BackgroundBrightGreen => Color32::from_rgb(0, 255, 0),
+                        TerminalColor::BackgroundBrightYellow => Color32::from_rgb(255, 255, 0),
+                        TerminalColor::BackgroundBrightBlue => Color32::from_rgb(0, 0, 255),
+                        TerminalColor::BackgroundBrightMagenta => Color32::from_rgb(255, 0, 255),
+                        TerminalColor::BackgroundBrightCyan => Color32::from_rgb(0, 255, 255),
+                        TerminalColor::BackgroundBrightWhite => Color32::from_rgb(255, 255, 255),
+                        _ => {Color32::BLACK}
+                    };
 
                     job.sections.push(egui::text::LayoutSection {
                         leading_space: 0.0f32,
@@ -208,9 +224,45 @@ impl eframe::App for TermieGui {
                     });
                 }
 
-                // FIXME: Brakes something for sure
                 ui.label(job)
             };
+            // Render background colors
+            for tag in self.terminal_emulator.format_data() {
+                if let TerminalColor::BackgroundRgb(r, g, b) = tag.color {
+                    let start_pos = cursor_to_buffer_position(
+                        &CursorState {
+                            x: tag.start,
+                            y: 0, // Adjust y if needed
+                            bold: false,
+                            color: TerminalColor::Default,
+                        },
+                        self.terminal_emulator.data(),
+                    );
+                    let end_pos = cursor_to_buffer_position(
+                        &CursorState {
+                            x: tag.end,
+                            y: 0, // Adjust y if needed
+                            bold: false,
+                            color: TerminalColor::Default,
+                        },
+                        self.terminal_emulator.data(),
+                    );
+
+                    let char_size = self.character_size.as_ref().unwrap();
+                    let x_start = start_pos as f32 * char_size.0;
+                    let x_end = end_pos as f32 * char_size.0;
+
+                    ui.painter().rect_filled(
+                        Rect::from_min_max(
+                            egui::pos2(x_start, response.rect.min.y),
+                            egui::pos2(x_end, response.rect.max.y),
+                        ),
+                        0.0,
+                        Color32::from_rgb(r, g, b),
+
+                    );
+                }
+            }
 
             paint_cursor(
                 response.rect,

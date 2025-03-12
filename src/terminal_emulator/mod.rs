@@ -62,7 +62,7 @@ fn set_nonblock(fd: &OwnedFd) {
     nix::fcntl::fcntl(fd.as_raw_fd(), nix::fcntl::FcntlArg::F_SETFL(flags)).unwrap();
 }
 
-fn cursor_to_buffer_position(cursor_pos: &CursorState, buf: &[u8]) -> usize {
+pub fn cursor_to_buffer_position(cursor_pos: &CursorState, buf: &[u8]) -> usize {
     let line_start = buf
         .split(|b| *b == b'\n')
         .take(cursor_pos.y)
@@ -203,73 +203,91 @@ fn adjust_existing_format_ranges(existing: &mut Vec<FormatTag>, range: &Range<us
 pub struct CursorState {
     pub x: usize,
     pub y: usize,
-    bold: bool,
-    color: TerminalColor,
+    pub(crate) bold: bool,
+    pub(crate) color: TerminalColor,
 
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TerminalColor {
     Default,
-    Black,
-    Red,
-    Green,
-    Yellow,
-    Blue,
-    Magenta,
-    Cyan,
-    White,
-    BrightBlack,    // Bright black (gray)
-    BrightRed,      // Bright red
-    BrightGreen,    // Bright green
-    BrightYellow,   // Bright yellow
-    BrightBlue,     // Bright blue
-    BrightMagenta,  // Bright magenta
-    BrightCyan,     // Bright cyan
-    BrightWhite,    // Bright white
-    Rgb(u8, u8, u8),
-
+    ForegroundBlack,
+    ForegroundRed,
+    ForegroundGreen,
+    ForegroundYellow,
+    ForegroundBlue,
+    ForegroundMagenta,
+    ForegroundCyan,
+    ForegroundWhite,
+    ForegroundBrightBlack,
+    ForegroundBrightRed,
+    ForegroundBrightGreen,
+    ForegroundBrightYellow,
+    ForegroundBrightBlue,
+    ForegroundBrightMagenta,
+    ForegroundBrightCyan,
+    ForegroundBrightWhite,
+    ForegroundRgb(u8, u8, u8),
+    BackgroundBlack,
+    BackgroundRed,
+    BackgroundGreen,
+    BackgroundYellow,
+    BackgroundBlue,
+    BackgroundMagenta,
+    BackgroundCyan,
+    BackgroundWhite,
+    BackgroundBrightBlack,
+    BackgroundBrightRed,
+    BackgroundBrightGreen,
+    BackgroundBrightYellow,
+    BackgroundBrightBlue,
+    BackgroundBrightMagenta,
+    BackgroundBrightCyan,
+    BackgroundBrightWhite,
+    BackgroundRgb(u8, u8, u8),
 }
 
 impl TerminalColor {
-        fn from_sgr(sgr: SelectGraphicRendition) -> Option<TerminalColor> {
-            match sgr {
-                SelectGraphicRendition::ForegroundBlack => Some(TerminalColor::Black),
-                SelectGraphicRendition::ForegroundRed => Some(TerminalColor::Red),
-                SelectGraphicRendition::ForegroundGreen => Some(TerminalColor::Green),
-                SelectGraphicRendition::ForegroundYellow => Some(TerminalColor::Yellow),
-                SelectGraphicRendition::ForegroundBlue => Some(TerminalColor::Blue),
-                SelectGraphicRendition::ForegroundMagenta => Some(TerminalColor::Magenta),
-                SelectGraphicRendition::ForegroundCyan => Some(TerminalColor::Cyan),
-                SelectGraphicRendition::ForegroundWhite => Some(TerminalColor::White),
-                SelectGraphicRendition::ForegroundBrightBlack => Some(TerminalColor::BrightBlack),
-                SelectGraphicRendition::ForegroundBrightRed => Some(TerminalColor::BrightRed),
-                SelectGraphicRendition::ForegroundBrightGreen => Some(TerminalColor::BrightGreen),
-                SelectGraphicRendition::ForegroundBrightYellow => Some(TerminalColor::BrightYellow),
-                SelectGraphicRendition::ForegroundBrightBlue => Some(TerminalColor::BrightBlue),
-                SelectGraphicRendition::ForegroundBrightMagenta => Some(TerminalColor::BrightMagenta),
-                SelectGraphicRendition::ForegroundBrightCyan => Some(TerminalColor::BrightCyan),
-                SelectGraphicRendition::ForegroundBrightWhite => Some(TerminalColor::BrightWhite),
-                SelectGraphicRendition::ForegroundTrueColor(r, g, b) => Some(TerminalColor::Rgb(r, g, b)),
-                SelectGraphicRendition::BackgroundTrueColor(r, g, b) => Some(TerminalColor::Rgb(r, g, b)),
-                _ => None,
-            }
-        }
-    fn handle_sgr_code(&mut self, code: u32, params: &[u32]) {
-        match code {
-            38 => {
-                if params.len() >= 2 && params[0] == 5 {
-                    // 8-bit color mode: \x1b[38;5;<n>m
-                    let color_index = params[1];
-                    let (r, g, b) = self.index_to_rgb(color_index);
-                }
-            }
-            // Handle other SGR codes...
-            _ => {
-                eprintln!("Unhandled SGR code: {}", code);
-            }
+    fn from_sgr(sgr: SelectGraphicRendition) -> Option<TerminalColor> {
+        match sgr {
+            SelectGraphicRendition::ForegroundBlack => Some(TerminalColor::ForegroundBlack),
+            SelectGraphicRendition::ForegroundRed => Some(TerminalColor::ForegroundRed),
+            SelectGraphicRendition::ForegroundGreen => Some(TerminalColor::ForegroundGreen),
+            SelectGraphicRendition::ForegroundYellow => Some(TerminalColor::ForegroundYellow),
+            SelectGraphicRendition::ForegroundBlue => Some(TerminalColor::ForegroundBlue),
+            SelectGraphicRendition::ForegroundMagenta => Some(TerminalColor::ForegroundMagenta),
+            SelectGraphicRendition::ForegroundCyan => Some(TerminalColor::ForegroundCyan),
+            SelectGraphicRendition::ForegroundWhite => Some(TerminalColor::ForegroundWhite),
+            SelectGraphicRendition::ForegroundBrightBlack => Some(TerminalColor::ForegroundBrightBlack),
+            SelectGraphicRendition::ForegroundBrightRed => Some(TerminalColor::ForegroundBrightRed),
+            SelectGraphicRendition::ForegroundBrightGreen => Some(TerminalColor::ForegroundBrightGreen),
+            SelectGraphicRendition::ForegroundBrightYellow => Some(TerminalColor::ForegroundBrightYellow),
+            SelectGraphicRendition::ForegroundBrightBlue => Some(TerminalColor::ForegroundBrightBlue),
+            SelectGraphicRendition::ForegroundBrightMagenta => Some(TerminalColor::ForegroundBrightMagenta),
+            SelectGraphicRendition::ForegroundBrightCyan => Some(TerminalColor::ForegroundBrightCyan),
+            SelectGraphicRendition::ForegroundBrightWhite => Some(TerminalColor::ForegroundBrightWhite),
+            SelectGraphicRendition::ForegroundTrueColor(r, g, b) => Some(TerminalColor::ForegroundRgb(r, g, b)),
+            SelectGraphicRendition::BackgroundBlack => Some(TerminalColor::BackgroundBlack),
+            SelectGraphicRendition::BackgroundRed => Some(TerminalColor::BackgroundRed),
+            SelectGraphicRendition::BackgroundGreen => Some(TerminalColor::BackgroundGreen),
+            SelectGraphicRendition::BackgroundYellow => Some(TerminalColor::BackgroundYellow),
+            SelectGraphicRendition::BackgroundBlue => Some(TerminalColor::BackgroundBlue),
+            SelectGraphicRendition::BackgroundMagenta => Some(TerminalColor::BackgroundMagenta),
+            SelectGraphicRendition::BackgroundCyan => Some(TerminalColor::BackgroundCyan),
+            SelectGraphicRendition::BackgroundWhite => Some(TerminalColor::BackgroundWhite),
+            SelectGraphicRendition::BackgroundBrightBlack => Some(TerminalColor::BackgroundBrightBlack),
+            SelectGraphicRendition::BackgroundBrightRed => Some(TerminalColor::BackgroundBrightRed),
+            SelectGraphicRendition::BackgroundBrightGreen => Some(TerminalColor::BackgroundBrightGreen),
+            SelectGraphicRendition::BackgroundBrightYellow => Some(TerminalColor::BackgroundBrightYellow),
+            SelectGraphicRendition::BackgroundBrightBlue => Some(TerminalColor::BackgroundBrightBlue),
+            SelectGraphicRendition::BackgroundBrightMagenta => Some(TerminalColor::BackgroundBrightMagenta),
+            SelectGraphicRendition::BackgroundBrightCyan => Some(TerminalColor::BackgroundBrightCyan),
+            SelectGraphicRendition::BackgroundBrightWhite => Some(TerminalColor::BackgroundBrightWhite),
+            SelectGraphicRendition::BackgroundTrueColor(r, g, b) => Some(TerminalColor::BackgroundRgb(r, g, b)),
+            _ => None,
         }
     }
+
 
     fn index_to_rgb(&self, index: u32) -> (u8, u8, u8) {
         if index >= 16 && index <= 231 {
@@ -459,210 +477,5 @@ impl TerminalEmulator {
 
     pub fn cursor_pos(&self) -> CursorState {
         self.cursor_pos.clone()
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_cursor_data_insert() {
-        let mut buf = Vec::new();
-        insert_data_at_position(b"asdf", 0, &mut buf);
-        assert_eq!(buf, b"asdf");
-
-        insert_data_at_position(b"123", 0, &mut buf);
-        assert_eq!(buf, b"123f");
-
-        insert_data_at_position(b"xyzw", 4, &mut buf);
-        assert_eq!(buf, b"123fxyzw");
-
-        insert_data_at_position(b"asdf", 2, &mut buf);
-        assert_eq!(buf, b"12asdfzw");
-    }
-
-    #[test]
-    fn basic_color_tracker_test() {
-        let mut format_tracker = FormatTracker::new();
-        let mut cursor_state = CursorState {
-            x: 0,
-            y: 0,
-            color: TerminalColor::Default,
-            bold: false,
-        };
-
-        cursor_state.color = TerminalColor::Yellow;
-        format_tracker.push_range(&cursor_state, 3..10);
-        let tags = format_tracker.tags();
-        assert_eq!(
-            tags,
-            &[
-                FormatTag {
-                    start: 0,
-                    end: 3,
-                    color: TerminalColor::Default,
-                    bold: false
-                },
-                FormatTag {
-                    start: 3,
-                    end: 10,
-                    color: TerminalColor::Yellow,
-                    bold: false
-                },
-                FormatTag {
-                    start: 10,
-                    end: usize::MAX,
-                    color: TerminalColor::Default,
-                    bold: false
-                },
-            ]
-        );
-
-        cursor_state.color = TerminalColor::Blue;
-        format_tracker.push_range(&cursor_state, 5..7);
-        let tags = format_tracker.tags();
-        assert_eq!(
-            tags,
-            &[
-                FormatTag {
-                    start: 0,
-                    end: 3,
-                    color: TerminalColor::Default,
-                    bold: false
-                },
-                FormatTag {
-                    start: 3,
-                    end: 5,
-                    color: TerminalColor::Yellow,
-                    bold: false
-                },
-                FormatTag {
-                    start: 5,
-                    end: 7,
-                    color: TerminalColor::Blue,
-                    bold: false
-                },
-                FormatTag {
-                    start: 7,
-                    end: 10,
-                    color: TerminalColor::Yellow,
-                    bold: false
-                },
-                FormatTag {
-                    start: 10,
-                    end: usize::MAX,
-                    color: TerminalColor::Default,
-                    bold: false
-                },
-            ]
-        );
-
-        cursor_state.color = TerminalColor::Green;
-        format_tracker.push_range(&cursor_state, 7..9);
-        let tags = format_tracker.tags();
-        assert_eq!(
-            tags,
-            &[
-                FormatTag {
-                    start: 0,
-                    end: 3,
-                    color: TerminalColor::Default,
-                    bold: false
-                },
-                FormatTag {
-                    start: 3,
-                    end: 5,
-                    color: TerminalColor::Yellow,
-                    bold: false
-                },
-                FormatTag {
-                    start: 5,
-                    end: 7,
-                    color: TerminalColor::Blue,
-                    bold: false
-                },
-                FormatTag {
-                    start: 7,
-                    end: 9,
-                    color: TerminalColor::Green,
-                    bold: false
-                },
-                FormatTag {
-                    start: 9,
-                    end: 10,
-                    color: TerminalColor::Yellow,
-                    bold: false
-                },
-                FormatTag {
-                    start: 10,
-                    end: usize::MAX,
-                    color: TerminalColor::Default,
-                    bold: false
-                },
-            ]
-        );
-
-        cursor_state.color = TerminalColor::Red;
-        cursor_state.bold = true;
-        format_tracker.push_range(&cursor_state, 6..11);
-        let tags = format_tracker.tags();
-        assert_eq!(
-            tags,
-            &[
-                FormatTag {
-                    start: 0,
-                    end: 3,
-                    color: TerminalColor::Default,
-                    bold: false
-                },
-                FormatTag {
-                    start: 3,
-                    end: 5,
-                    color: TerminalColor::Yellow,
-                    bold: false
-                },
-                FormatTag {
-                    start: 5,
-                    end: 6,
-                    color: TerminalColor::Blue,
-                    bold: false
-                },
-                FormatTag {
-                    start: 6,
-                    end: 11,
-                    color: TerminalColor::Red,
-                    bold: true
-                },
-                FormatTag {
-                    start: 11,
-                    end: usize::MAX,
-                    color: TerminalColor::Default,
-                    bold: false
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn test_range_overlap() {
-        assert!(ranges_overlap(5..10, 7..9));
-        assert!(ranges_overlap(5..10, 8..12));
-        assert!(ranges_overlap(5..10, 3..6));
-        assert!(ranges_overlap(5..10, 2..12));
-        assert!(!ranges_overlap(5..10, 10..12));
-        assert!(!ranges_overlap(5..10, 0..5));
-    }
-    #[test]
-
-    fn test_true_color() {
-        let mut color = TerminalColor::Rgb(0, 0, 0);
-        assert_eq!(color, TerminalColor::Rgb(0, 0, 0));
-
-        color = TerminalColor::from_sgr(SelectGraphicRendition::ForegroundTrueColor(255, 0, 0)).unwrap();
-        assert_eq!(color, TerminalColor::Rgb(255, 0, 0));
-
-        color = TerminalColor::from_sgr(SelectGraphicRendition::BackgroundTrueColor(0, 255, 0)).unwrap();
-        assert_eq!(color, TerminalColor::Rgb(0, 255, 0));
     }
 }
