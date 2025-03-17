@@ -198,6 +198,19 @@ fn adjust_existing_format_ranges(existing: &mut Vec<FormatTag>, range: &Range<us
     delete_items_from_vec(to_delete, existing);
     existing.extend(to_push);
 }
+pub fn buffer_index_to_cursor_pos(buf: &[u8], index: usize) -> (usize, usize) {
+    let mut y = 0;
+    let mut current = 0;
+    for line in buf.split(|&b| b == b'\n') {
+        let line_len = line.len();
+        if current + line_len >= index {
+            return (index - current, y);
+        }
+        current += line_len + 1; // +1 for the newline character
+        y += 1;
+    }
+    (0, y)
+}
 
 #[derive(Clone)]
 pub struct CursorState {
@@ -244,7 +257,8 @@ pub enum TerminalColor {
     BackgroundBrightMagenta,
     BackgroundBrightCyan,
     BackgroundBrightWhite,
-    BackgroundRgb(u8, u8, u8),
+    BackgroundTrueColor(u8, u8, u8),
+    Foreground8Bit(u8),
 }
 
 impl TerminalColor {
@@ -283,13 +297,16 @@ impl TerminalColor {
             SelectGraphicRendition::BackgroundBrightMagenta => Some(TerminalColor::BackgroundBrightMagenta),
             SelectGraphicRendition::BackgroundBrightCyan => Some(TerminalColor::BackgroundBrightCyan),
             SelectGraphicRendition::BackgroundBrightWhite => Some(TerminalColor::BackgroundBrightWhite),
-            SelectGraphicRendition::BackgroundTrueColor(r, g, b) => Some(TerminalColor::BackgroundRgb(r, g, b)),
+            SelectGraphicRendition::BackgroundTrueColor(r, g, b) => Some(TerminalColor::BackgroundTrueColor(r, g, b)),
+            SelectGraphicRendition::Foreground8Bit(n) => {
+                Some(TerminalColor::Foreground8Bit(n))
+            }
             _ => None,
         }
     }
 
 
-    fn index_to_rgb(&self, index: u32) -> (u8, u8, u8) {
+   pub fn index_to_rgb(&self, index: u32) -> (u8, u8, u8) {
         if index >= 16 && index <= 231 {
             // Convert index to RGB in the 6x6x6 color cube
             let index = index - 16;
