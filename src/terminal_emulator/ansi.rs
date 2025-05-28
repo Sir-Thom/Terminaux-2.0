@@ -1,3 +1,5 @@
+
+use super::Mode;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SelectGraphicRendition {
     // NOTE: Non-exhaustive list
@@ -156,6 +158,7 @@ impl SelectGraphicRendition {
     }
 }
 
+
 #[derive(Debug, Eq, PartialEq)]
 pub enum TerminalOutput {
     SetCursorPos { x: Option<usize>, y: Option<usize> },
@@ -168,7 +171,18 @@ pub enum TerminalOutput {
     Sgr(SelectGraphicRendition),
     Data(Vec<u8>),
     Invalid,
+    SetMode(Mode),
+    ResetMode(Mode),
+    Delete(usize),
     //SetCursorVisibility(bool),
+}
+
+fn mode_from_params(params: &[u8]) -> Mode {
+    match params {
+        // https://vt100.net/docs/vt510-rm/DECCKM.html
+        b"?1" => Mode::Decckm,
+        _ => Mode::Unknown(params.to_vec()),
+    }
 }
 
 enum CsiParserState {
@@ -178,6 +192,7 @@ enum CsiParserState {
     Invalid,
     InvalidFinished,
 }
+
 
 fn is_csi_terminator(b: u8) -> bool {
     (0x40..=0x7d).contains(&b)
@@ -243,6 +258,7 @@ impl CsiParser {
                     self.state = CsiParserState::Intermediates;
                 } else if is_csi_terminator(b) {
                     self.state = CsiParserState::Finished(b);
+
                 } else {
                     self.state = CsiParserState::Invalid
                 }
@@ -258,6 +274,7 @@ impl CsiParser {
                     self.state = CsiParserState::Invalid
                 }
             }
+
             CsiParserState::Invalid => {
                 if is_csi_terminator(b) {
                     self.state = CsiParserState::InvalidFinished;
@@ -335,7 +352,7 @@ impl AnsiParser {
                         }
                         _ => {
                             let b_utf8 = std::char::from_u32(*b as u32);
-                            println!("Unhandled escape sequence {b_utf8:?} {b:x}");
+                            warn!("Unhandled escape sequence {b_utf8:?} {b:x}");
                             self.inner = AnsiParserInner::Empty;
                         }
                     }
@@ -348,7 +365,7 @@ impl AnsiParser {
                                 split_params_into_semicolon_delimited_usize(&parser.params);
 
                             let Ok(params) = params else {
-                                println!("Invalid cursor set position sequence");
+                                warn!("Invalid cursor set position sequence");
                                 output.push(TerminalOutput::Invalid);
                                 self.inner = AnsiParserInner::Empty;
                                 continue;
@@ -363,7 +380,7 @@ impl AnsiParser {
 
                         CsiParserState::Finished(b'G') => {
                             let Ok(param) = parse_param_as_usize(&parser.params) else {
-                                println!("Invalid cursor set position sequence");
+                                warn!("Invalid cursor set position sequence");
                                 output.push(TerminalOutput::Invalid);
                                 self.inner = AnsiParserInner::Empty;
                                 continue;
@@ -379,7 +396,7 @@ impl AnsiParser {
                         }
                         CsiParserState::Finished(b'J') => {
                             let Ok(param) = parse_param_as_usize(&parser.params) else {
-                                println!("Invalid clear command");
+                                warn!("Invalid clear command");
                                 output.push(TerminalOutput::Invalid);
                                 self.inner = AnsiParserInner::Empty;
                                 continue;
@@ -392,6 +409,27 @@ impl AnsiParser {
                                 _ => TerminalOutput::Invalid,
                             };
                             output.push(ret);
+                            self.inner = AnsiParserInner::Empty;
+                        }
+                        CsiParserState::Finished(b'h') => {
+                            output.push(TerminalOutput::SetMode(mode_from_params(&parser.params)));
+                            self.inner = AnsiParserInner::Empty;
+                        }
+                        CsiParserState::Finished(b'l') => {
+                            output
+                                .push(TerminalOutput::ResetMode(mode_from_params(&parser.params)));
+                            self.inner = AnsiParserInner::Empty;
+                        }
+                        CsiParserState::Finished(b'P') => {
+                            let Ok(param) = parse_param_as_usize(&parser.params) else {
+                                warn!("Invalid del command");
+                                output.push(TerminalOutput::Invalid);
+                                self.inner = AnsiParserInner::Empty;
+                                continue;
+                            };
+
+                            output.push(TerminalOutput::Delete(param.unwrap_or(1)));
+
                             self.inner = AnsiParserInner::Empty;
                         }
                         CsiParserState::Finished(b'm') => {
@@ -479,7 +517,7 @@ impl AnsiParser {
                         CsiParserState::Finished(b'A') => {
                             // Handle Cursor Up
                             let Ok(param) = parse_param_as_usize(&parser.params) else {
-                                println!("Invalid cursor up sequence");
+                                warn!("Invalid cursor up sequence");
                                 output.push(TerminalOutput::Invalid);
                                 self.inner = AnsiParserInner::Empty;
                                 continue;
@@ -491,7 +529,7 @@ impl AnsiParser {
                         CsiParserState::Finished(b'C') => {
                             // Handle Cursor Forward
                             let Ok(param) = parse_param_as_usize(&parser.params) else {
-                                println!("Invalid cursor forward sequence");
+                                warn!("Invalid cursor forward sequence");
                                 output.push(TerminalOutput::Invalid);
                                 self.inner = AnsiParserInner::Empty;
                                 continue;
@@ -509,6 +547,36 @@ impl AnsiParser {
 
                             self.inner = AnsiParserInner::Empty;
                         }
+                        CsiParserState::Finished(b'K') => {
+                            // Handle Erase in Line
+                            let Ok(param) = parse_param_as_usize(&parser.params) else {
+                                warn!("Invalid erase in line sequence");
+                                output.push(TerminalOutput::Invalid);
+                                self.inner = AnsiParserInner::Empty;
+                                continue;
+                            };
+
+                            let ret = match param.unwrap_or(0) {
+                                0 => TerminalOutput::ClearForwards,
+                                1 => TerminalOutput::Backspace,
+                                2 => TerminalOutput::ClearAll,
+                                _ => TerminalOutput::Invalid,
+                            };
+                            output.push(ret);
+                            self.inner = AnsiParserInner::Empty;
+                        }
+                        CsiParserState::Finished(b'D') => {
+                            // Handle Cursor Backward
+                            let Ok(param) = parse_param_as_usize(&parser.params) else {
+                                warn!("Invalid cursor backward sequence");
+                                output.push(TerminalOutput::Invalid);
+                                self.inner = AnsiParserInner::Empty;
+                                continue;
+                            };
+                            let columns = param.unwrap_or(1);
+                            // Implement cursor backward logic here
+                            self.inner = AnsiParserInner::Empty;
+                        }
                         CsiParserState::Finished(b'l') => {
                             if parser.params == b"?25" {
                                 output.push(TerminalOutput::SetCursorVisibility(false));
@@ -518,7 +586,7 @@ impl AnsiParser {
                             // Other CSI l handling...
                         }
                         CsiParserState::Finished(esc) => {
-                            println!(
+                            warn!(
         "Unhandled csi code: {:?} {esc:x} {}/{}",
                                 std::char::from_u32(esc as u32),
                                 esc >> 4,
@@ -528,7 +596,7 @@ impl AnsiParser {
                             self.inner = AnsiParserInner::Empty;
                         }
                         CsiParserState::Invalid => {
-                            println!("Invalid CSI sequence");
+                            warn!("Invalid CSI sequence");
                             output.push(TerminalOutput::Invalid);
                             self.inner = AnsiParserInner::Empty;
                         }

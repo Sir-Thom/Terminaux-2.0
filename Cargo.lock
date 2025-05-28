@@ -2727,6 +2727,7 @@ dependencies = [
  "eframe",
  "lazy_static",
  "libc",
+ "log",
  "nix 0.27.1",
  "vt100",
  "vte 0.15.0",
