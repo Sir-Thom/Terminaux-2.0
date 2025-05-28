@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 libc = "0.2"       # For low-level system calls
-nix = "0.26"       # For PTY handling
+nix = { version = "0.27.1", default-features = false, features = ["term", "process", "fs", "ioctl"] }       # For PTY handling
 crossbeam = "0.8"  # For concurrent channels
 crossterm = "0.26"
 vt100 = "0.15"

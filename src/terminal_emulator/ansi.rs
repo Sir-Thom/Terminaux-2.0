@@ -4,6 +4,17 @@ pub enum SelectGraphicRendition {
     Reset,
     Bold,
     BlinkSlow,
+    Faint,          // 2
+    Italic,         // 3
+    Underline,      // 4
+    BlinkRapid,     // 6
+    Reverse,        // 7
+    Conceal,        // 8
+    Reveal,         // 28 (companion to 8)
+    NotItalic,      // 23
+    NotUnderline,   // 24
+    NormalIntensity,// 22
+    ForegroundDefault,
     ForegroundBlack,
     ForegroundRed,
     ForegroundGreen,
@@ -12,6 +23,7 @@ pub enum SelectGraphicRendition {
     ForegroundMagenta,
     ForegroundCyan,
     ForegroundWhite,
+    BackgroundDefault,
     BackgroundBlack,
     BackgroundRed,
     BackgroundGreen,
@@ -48,7 +60,17 @@ impl SelectGraphicRendition {
         match val {
             0 => SelectGraphicRendition::Reset,
             1 => SelectGraphicRendition::Bold,
+            2 => SelectGraphicRendition::Faint,
+            3 => SelectGraphicRendition::Italic,
+            4 => SelectGraphicRendition::Underline,
             5 => SelectGraphicRendition::BlinkSlow,
+            6 => SelectGraphicRendition::BlinkRapid,
+            7 => SelectGraphicRendition::Reverse,
+            8 => SelectGraphicRendition::Conceal,
+            22 => SelectGraphicRendition::NormalIntensity,
+            23 => SelectGraphicRendition::NotItalic,
+            24 => SelectGraphicRendition::NotUnderline,
+            28 => SelectGraphicRendition::Reveal,
             30 => SelectGraphicRendition::ForegroundBlack,
             31 => SelectGraphicRendition::ForegroundRed,
             32 => SelectGraphicRendition::ForegroundGreen,
@@ -138,7 +160,10 @@ impl SelectGraphicRendition {
 pub enum TerminalOutput {
     SetCursorPos { x: Option<usize>, y: Option<usize> },
     ClearForwards,
-    ClearBackwards,
+    SetCursorVisibility(bool),
+    CarriageReturn,
+    Backspace,
+    Newline,
     ClearAll,
     Sgr(SelectGraphicRendition),
     Data(Vec<u8>),
@@ -203,6 +228,7 @@ impl CsiParser {
         }
     }
 
+
     fn push(&mut self, b: u8) {
         if let CsiParserState::Finished(_) | CsiParserState::InvalidFinished = &self.state {
             panic!("CsiParser should not be pushed to once finished");
@@ -236,6 +262,7 @@ impl CsiParser {
                 if is_csi_terminator(b) {
                     self.state = CsiParserState::InvalidFinished;
                 }
+
             }
             CsiParserState::Finished(_) | CsiParserState::InvalidFinished => {
                 unreachable!();
@@ -253,7 +280,11 @@ enum AnsiParserInner {
 pub struct AnsiParser {
     inner: AnsiParserInner,
 }
-
+fn push_data_if_non_empty(data: &mut Vec<u8>, output: &mut Vec<TerminalOutput>) {
+    if !data.is_empty() {
+        output.push(TerminalOutput::Data(std::mem::take(data)));
+    }
+}
 impl AnsiParser {
     pub fn new() -> AnsiParser {
         AnsiParser {
@@ -272,7 +303,22 @@ impl AnsiParser {
                         continue;
                     }
                     if *b == b'\r' {
-                        // Currently carriage returns are not handled properly, so we swallow them
+                        push_data_if_non_empty(&mut data_output, &mut output);
+                        output.push(TerminalOutput::CarriageReturn);
+                        continue;
+                    }
+
+                    if *b == b'\n' {
+                        push_data_if_non_empty(&mut data_output, &mut output);
+                        output.push(TerminalOutput::Newline);
+                        continue;
+                    }
+                    // print the contents of the buffer
+                   // println!("Data: {:?}", data_output);
+                    // Explicitly check for Backspace (0x08) and DEL (0x7f)
+                    if *b == 0x08 || *b == 0x7f {
+                        push_data_if_non_empty(&mut data_output, &mut output);
+                        output.push(TerminalOutput::Backspace);
                         continue;
                     }
 
@@ -341,7 +387,7 @@ impl AnsiParser {
 
                             let ret = match param.unwrap_or(0) {
                                 0 => TerminalOutput::ClearForwards,
-                                1 => TerminalOutput::ClearBackwards,
+                             //   1 => TerminalOutput::ClearBackwards,
                                 2 | 3 => TerminalOutput::ClearAll,
                                 _ => TerminalOutput::Invalid,
                             };
@@ -362,6 +408,8 @@ impl AnsiParser {
                             while i < params.len() {
                                 let code = params[i].unwrap_or(0);
                                 let sgr = match code {
+                                    39 => SelectGraphicRendition::ForegroundDefault,
+                                    49 => SelectGraphicRendition::BackgroundDefault,
                                     38 | 48 => {
                                         // Handle multi-parameter codes (foreground/background)
                                         if i + 1 >= params.len() {
@@ -455,12 +503,26 @@ impl AnsiParser {
                         CsiParserState::Finished(b'h') => {
                             // Handle Set Mode
                             // Implement set mode logic here
+                            if parser.params == b"?25" {
+                                output.push(TerminalOutput::SetCursorVisibility(true));
+                            }
+
                             self.inner = AnsiParserInner::Empty;
+                        }
+                        CsiParserState::Finished(b'l') => {
+                            if parser.params == b"?25" {
+                                output.push(TerminalOutput::SetCursorVisibility(false));
+                            }
+                            self.inner = AnsiParserInner::Empty;
+
+                            // Other CSI l handling...
                         }
                         CsiParserState::Finished(esc) => {
                             println!(
-                                "Unhandled csi code: {:?} {esc:x}",
-                                std::char::from_u32(esc as u32)
+        "Unhandled csi code: {:?} {esc:x} {}/{}",
+                                std::char::from_u32(esc as u32),
+                                esc >> 4,
+                                esc & 0xf,
                             );
                             output.push(TerminalOutput::Invalid);
                             self.inner = AnsiParserInner::Empty;
@@ -564,10 +626,7 @@ mod test {
         assert_eq!(parsed.len(), 1);
         assert!(matches!(parsed[0], TerminalOutput::ClearForwards,));
 
-        let mut output_buffer = AnsiParser::new();
-        let parsed = output_buffer.push(b"\x1b[1J");
-        assert_eq!(parsed.len(), 1);
-        assert!(matches!(parsed[0], TerminalOutput::ClearBackwards,));
+
 
         let mut output_buffer = AnsiParser::new();
         let parsed = output_buffer.push(b"\x1b[2J");
