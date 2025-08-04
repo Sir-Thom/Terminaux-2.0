@@ -1,7 +1,7 @@
 use std::sync::Arc;
-use crate::terminal_emulator::{buffer_index_to_cursor_pos, cursor_to_buffer_position, BlinkMode, CursorPos, CursorState, FormatTag, TerminalColor, TerminalEmulator, TerminalInput};
-use eframe::egui::{self, CentralPanel, Color32, Event, FontData, FontDefinitions,Modifiers, FontFamily, InputState, Key, Rect, TextFormat, TextStyle, Ui};
-use eframe::egui::text::LayoutJob;
+use crate::terminal_emulator::{ cursor_to_buffer_position, BlinkMode, CursorPos, CursorState, FormatTag, TerminalColor, TerminalEmulator, TerminalInput};
+use eframe::egui::{ self, text::LayoutJob, CentralPanel, Color32, DragValue, Event, FontData, FontDefinitions,
+                    FontFamily, FontId, InputState, Key, Modifiers, Rect, TextFormat, TextStyle, Ui};
 use std::borrow::Cow;
 use log::info;
 
@@ -93,6 +93,9 @@ canvas_area: Rect,
 fn render_terminal_output(
     ui: &mut egui::Ui,
     terminal_emulator: &TerminalEmulator,
+    font_size: f32,
+
+
 ) -> TerminalOutputRenderResponse {
     let terminal_data = terminal_emulator.data();
     let mut scrollback_data = terminal_data.scrollback;
@@ -113,11 +116,14 @@ fn render_terminal_output(
     }
 
     let response = egui::ScrollArea::new([false, true])
+        .auto_shrink([false, false])
         .stick_to_bottom(true)
         .show(ui, |ui| {
             let scrollback_area =
-                add_terminal_data_to_ui(ui, scrollback_data, &format_data.scrollback).rect;
-            let canvas_area = add_terminal_data_to_ui(ui, canvas_data, &format_data.visible).rect;
+                add_terminal_data_to_ui(ui, scrollback_data, &format_data.scrollback, font_size)
+                    .rect;
+            let canvas_area =
+                add_terminal_data_to_ui(ui, canvas_data, &format_data.visible, font_size).rect;
             TerminalOutputRenderResponse {
                 scrollback_area,
                 canvas_area,
@@ -299,21 +305,44 @@ let gray = 8 + (index - 232) as u8 * 10;
 (gray, gray, gray)
 }
 }
-fn get_char_size(ctx: &egui::Context) -> (f32, f32) {
-    let font_id = ctx.style().text_styles[&egui::TextStyle::Monospace].clone();
+
+fn get_char_size(ctx: &egui::Context, font_size: f32) -> (f32, f32) {
+    let font_id = FontId {
+        size: font_size,
+        family: FontFamily::Name(REGULAR_FONT_NAME.into()),
+    };
+
+    // NOTE: Using glyph width and row height do not give accurate results. Even using the mesh
+    // bounds of a single character is not reasonable. Instead we layout 16 rows and 16 cols and
+    // divide by 16. This seems to work better at all font scales
     ctx.fonts(move |fonts| {
-        // NOTE: Glyph width seems to be a little too wide
-        let width = fonts
+        let rect = fonts
             .layout(
-                "@".to_string(),
+                "asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf\n\
+                 asdfasdfasdfasdf"
+                    .to_string(),
                 font_id.clone(),
                 Color32::WHITE,
                 f32::INFINITY,
             )
-            .mesh_bounds
-            .width();
+            .rect;
 
-        let height = fonts.row_height(&font_id);
+        let width = rect.width() / 16.0;
+        let height = rect.height() / 16.0;
 
         (width, height)
     })
@@ -404,7 +433,12 @@ fn setup_fonts(ctx: &egui::Context) {
 
     ctx.set_fonts(fonts);
 }
-fn add_terminal_data_to_ui(ui: &mut Ui, data: &[u8], format_data: &[FormatTag]) -> egui::Response {
+fn add_terminal_data_to_ui(
+ui: &mut Ui,
+data: &[u8],
+format_data: &[FormatTag],
+font_size: f32,
+) -> egui::Response {
     let (mut job, mut textformat) =
         create_terminal_output_layout_job(ui.style(), ui.available_width(), data);
 
@@ -419,7 +453,19 @@ fn add_terminal_data_to_ui(ui: &mut Ui, data: &[u8], format_data: &[FormatTag]) 
             range.end =  data.len();
         }
 
+        match range.start.cmp(&data.len()) {
+            std::cmp::Ordering::Greater => {
+                warn!("Invalid format data for text");
+                continue;
+            }
+            std::cmp::Ordering::Equal => {
+                continue;
+            }
+            _ => (),
+        }
+
         textformat.font_id.family = terminal_fonts.get_family(tag.bold,tag.italic);
+        textformat.font_id.size = font_size;
         textformat.color = terminal_color_to_egui(&default_color, &color);
 
         job.sections.push(egui::text::LayoutSection {
@@ -432,17 +478,18 @@ fn add_terminal_data_to_ui(ui: &mut Ui, data: &[u8], format_data: &[FormatTag]) 
     ui.label(job)
 }
 
-struct TermieGui {
+struct TerminauxGui {
     terminal_emulator: TerminalEmulator,
-    character_size: Option<(f32, f32)>,
+    font_size: f32,
     last_blink_time: Option<f64>,
     blink_on: bool,
     blink_state: bool,
     last_blink_toggle: Option<f64>,
+
     debug_renderer: DebugRenderer,
 }
 
-impl TermieGui {
+impl TerminauxGui {
     fn update_blink_state(&mut self, ctx: &egui::Context) {
         let current_time = ctx.input(|i| i.time);
         let blink_interval = match self.terminal_emulator.cursor_state.blink_mode {
@@ -472,9 +519,9 @@ impl TermieGui {
         cc.egui_ctx.set_pixels_per_point(1.0);
         setup_fonts(&cc.egui_ctx);
 
-        TermieGui {
+        TerminauxGui {
             terminal_emulator,
-            character_size: None,
+            font_size: 12.0,
             last_blink_time: None,
             blink_on: true,
             blink_state: false,
@@ -485,11 +532,11 @@ impl TermieGui {
     }
 }
 
-impl eframe::App for TermieGui {
+impl eframe::App for TerminauxGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if self.character_size.is_none() {
-            self.character_size = Some(get_char_size(ctx));
-        }
+        let character_size = get_char_size(ctx, self.font_size);
+
+
 
 
 
@@ -497,20 +544,22 @@ impl eframe::App for TermieGui {
 
         let panel_response = CentralPanel::default().show(ctx, |ui| {
             let frame_response = egui::Frame::none().show(ui, |ui| {
-                ui.set_width(
-                    (crate::terminal_emulator::TERMINAL_WIDTH as f32 + 0.5)
-                        * self.character_size.as_ref().unwrap().0,
-                );
-                ui.set_height(
-                    (crate::terminal_emulator::TERMINAL_HEIGHT as f32 + 0.5)
-                        * self.character_size.as_ref().unwrap().1,
-                );
+                let width_chars = (ui.available_width() / character_size.0).floor();
+                let height_chars = (ui.available_height() / character_size.1).floor();
+
+                self.terminal_emulator
+                    .set_win_size(width_chars as usize, height_chars as usize);
+
+                ui.set_width((width_chars + 0.5) * character_size.0);
+                ui.set_height((height_chars + 0.5) * character_size.1);
 
                 ui.input(|input_state| {
                     write_input_to_terminal(input_state, &mut self.terminal_emulator);
                 });
 
-                let output_response = render_terminal_output(ui, &self.terminal_emulator);
+                let output_response = render_terminal_output(ui, &self.terminal_emulator, self.font_size);
+
+
                 self.debug_renderer
                     .render(ui, output_response.canvas_area, Color32::BLUE);
                 self.debug_renderer.render(ui, output_response.scrollback_area, Color32::YELLOW);
@@ -518,7 +567,7 @@ impl eframe::App for TermieGui {
 
                 paint_cursor(
                     output_response.canvas_area,
-                    self.character_size.as_ref().unwrap(),
+                    &character_size,
                     &self.terminal_emulator.cursor_pos(),
                   //  self.terminal_emulator.data(),
                     ui,
@@ -529,6 +578,10 @@ impl eframe::App for TermieGui {
         });
 
         panel_response.response.context_menu(|ui| {
+            ui.horizontal(|ui| {
+                ui.label("Font size:");
+                ui.add(DragValue::new(&mut self.font_size).clamp_range(1.0..=100.0));
+            });
             ui.checkbox(&mut self.debug_renderer.enable, "Debug render");
         });
     }
@@ -540,7 +593,7 @@ pub fn run(terminal_emulator: TerminalEmulator) {
     eframe::run_native(
         "Terminaux",
         native_options,
-        Box::new(move |cc| Ok(Box::new(TermieGui::new(cc, terminal_emulator)))),
+        Box::new(move |cc| Ok(Box::new(TerminauxGui::new(cc, terminal_emulator)))),
     )
         .unwrap();
 }

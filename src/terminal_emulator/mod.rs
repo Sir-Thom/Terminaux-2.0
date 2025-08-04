@@ -5,6 +5,7 @@ use ansi::{AnsiParser, SelectGraphicRendition, TerminalOutput};
 use buffer::TerminalBuffer;
 mod ansi;
 mod buffer;
+mod format_tracker;
 
 pub const TERMINAL_WIDTH: u16 = 80;
 pub const TERMINAL_HEIGHT: u16 = 24;
@@ -335,6 +336,7 @@ fn split_format_data_for_scrollback(
 }
 
 #[derive(Debug, Clone)]
+#[derive(PartialEq)]
 pub struct CursorPos {
     pub x: usize,
     pub y: usize,
@@ -512,6 +514,25 @@ impl FormatTracker {
             }],
         }
     }
+    /// Move all tags > range.start to range.start + range.len
+    /// No gaps in coloring data, so one range must expand instead of just be adjusted
+    pub fn push_range_adjustment(&mut self, range: Range<usize>) {
+        let range_len = range.end - range.start;
+        for info in &mut self.color_info {
+            if info.end <= range.start {
+                continue;
+            }
+
+            if info.start > range.start {
+                info.start += range_len;
+                if info.end != usize::MAX {
+                    info.end += range_len;
+                }
+            } else if info.end != usize::MAX {
+                info.end += range_len;
+            }
+        }
+    }
 
     fn push_range(&mut self, cursor: &CursorState, range: Range<usize>) {
         adjust_existing_format_ranges(&mut self.color_info, &range);
@@ -663,6 +684,7 @@ impl TerminalEmulator {
                             let response = self
                                 .buf
                                 .insert_data(&self.cursor_state.pos, &data);
+                            self.format_tracker.push_range_adjustment(response.insertion_range);
                             self.format_tracker
                                 .push_range(&self.cursor_state, response.written_range);
                             self.cursor_state.pos = response.new_cursor_pos;
@@ -691,8 +713,6 @@ impl TerminalEmulator {
                             self.cursor_state.pos.x = 0;
                         }
                         TerminalOutput::Newline => {
-                            self.buf
-                                .append_newline_at_line_end(&self.cursor_state.pos);
                             self.cursor_state.pos.y += 1;
                         }
                         TerminalOutput::Backspace => {
@@ -708,7 +728,22 @@ impl TerminalEmulator {
                                 self.format_tracker.delete_range(range);
                             }
                         }
+                        TerminalOutput::InsertSpaces(num_spaces) => {
+                            let response = self
+                                .buf
+                                .insert_spaces(&self.cursor_state.pos, num_spaces);
 
+                            self.format_tracker
+                                .push_range_adjustment(response.insertion_range);
+                        }
+                        TerminalOutput::ClearLineForwards => {
+                            if let Some(range) = self
+                                .buf
+                                .clear_line_forwards(&self.cursor_state.pos)
+                            {
+                                self.format_tracker.delete_range(range);
+                            }
+                        }
 
                         TerminalOutput::ClearAll => {
                             self.format_tracker
@@ -777,6 +812,25 @@ impl TerminalEmulator {
     }
     pub fn cursor_pos(&self) -> CursorPos {
         self.cursor_state.pos.clone()
+    }
+    pub fn set_win_size(&mut self, width_chars: usize, height_chars: usize) {
+        let response =
+            self.buf
+                .set_win_size(width_chars, height_chars, &self.cursor_state.pos);
+        self.cursor_state.pos = response.new_cursor_pos;
+
+        if response.changed {
+            let win_size = nix::pty::Winsize {
+                ws_row: height_chars as u16,
+                ws_col: width_chars as u16,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            };
+
+            unsafe {
+                set_window_size(self.fd.as_raw_fd(), &win_size).unwrap();
+            }
+        }
     }
 }
 

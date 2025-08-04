@@ -174,12 +174,14 @@ pub enum TerminalOutput {
     SetMode(Mode),
     ResetMode(Mode),
     Delete(usize),
+    ClearLineForwards,
+    // ich (8.3.64 of ecma-48)
+    InsertSpaces(usize),
     //SetCursorVisibility(bool),
 }
 
 fn mode_from_params(params: &[u8]) -> Mode {
     match params {
-        // https://vt100.net/docs/vt510-rm/DECCKM.html
         b"?1" => Mode::Decckm,
         _ => Mode::Unknown(params.to_vec()),
     }
@@ -377,6 +379,25 @@ impl AnsiParser {
                             });
                             self.inner = AnsiParserInner::Empty;
                         }
+                        CsiParserState::Finished(b'K') => {
+                            let Ok(param) = parse_param_as_usize(&parser.params) else {
+                                warn!("Invalid erase in line command");
+                                output.push(TerminalOutput::Invalid);
+                                self.inner = AnsiParserInner::Empty;
+                                continue;
+                            };
+
+                            // ECMA-48 8.3.39
+                            match param.unwrap_or(0) {
+                                0 => output.push(TerminalOutput::ClearLineForwards),
+                                v => {
+                                    warn!("Unsupported erase in line command ({v})");
+                                    output.push(TerminalOutput::Invalid);
+                                }
+                            }
+
+                            self.inner = AnsiParserInner::Empty;
+                        }
 
                         CsiParserState::Finished(b'G') => {
                             let Ok(param) = parse_param_as_usize(&parser.params) else {
@@ -422,7 +443,7 @@ impl AnsiParser {
                         }
                         CsiParserState::Finished(b'P') => {
                             let Ok(param) = parse_param_as_usize(&parser.params) else {
-                                warn!("Invalid del command");
+                                println!("Invalid del command");
                                 output.push(TerminalOutput::Invalid);
                                 self.inner = AnsiParserInner::Empty;
                                 continue;
@@ -584,6 +605,18 @@ impl AnsiParser {
                             self.inner = AnsiParserInner::Empty;
 
                             // Other CSI l handling...
+                        }
+                        CsiParserState::Finished(b'@') => {
+                            let Ok(param) = parse_param_as_usize(&parser.params) else {
+                                warn!("Invalid ich command");
+                                output.push(TerminalOutput::Invalid);
+                                self.inner = AnsiParserInner::Empty;
+                                continue;
+                            };
+
+                            // ecma-48 8.3.64
+                            output.push(TerminalOutput::InsertSpaces(param.unwrap_or(1)));
+                            self.inner = AnsiParserInner::Empty;
                         }
                         CsiParserState::Finished(esc) => {
                             warn!(
