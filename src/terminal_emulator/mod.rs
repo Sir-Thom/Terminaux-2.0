@@ -1,10 +1,15 @@
-use nix::{errno::Errno, ioctl_write_ptr_bad, unistd::ForkResult};
-use std::{ffi::CStr, fmt, ops::Range, os::fd::{AsRawFd, OwnedFd}};
-use std::os::fd::FromRawFd;
+use crate::terminal_emulator::format_tracker::{FormatTag, FormatTracker};
 use ansi::{AnsiParser, SelectGraphicRendition, TerminalOutput};
 use buffer::TerminalBuffer;
-use format_tracker::{ColorRangeAdjustment};
-use crate::terminal_emulator::format_tracker::{FormatTag, FormatTracker};
+use format_tracker::ColorRangeAdjustment;
+use nix::{errno::Errno, ioctl_write_ptr_bad, unistd::ForkResult};
+use std::os::fd::FromRawFd;
+use std::{
+    ffi::CStr,
+    fmt,
+    ops::Range,
+    os::fd::{AsRawFd, OwnedFd},
+};
 
 mod ansi;
 mod buffer;
@@ -12,7 +17,6 @@ pub(crate) mod format_tracker;
 
 pub const TERMINAL_WIDTH: u16 = 80;
 pub const TERMINAL_HEIGHT: u16 = 24;
-
 
 #[derive(Eq, PartialEq)]
 enum Mode {
@@ -29,7 +33,6 @@ enum Mode {
 impl fmt::Debug for Mode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-
             Mode::Decckm => f.write_str("Decckm"),
             Mode::Decawm => f.write_str("Decawm"),
             Mode::Dectcem => f.write_str("Dectcem"),
@@ -41,8 +44,6 @@ impl fmt::Debug for Mode {
         }
     }
 }
-
-
 
 fn char_to_ctrl_code(c: u8) -> u8 {
     // https://catern.com/posts/terminal_quirks.html
@@ -118,7 +119,7 @@ fn spawn_shell() -> OwnedFd {
             ForkResult::Child => {
                 let shell_name = CStr::from_bytes_with_nul(b"bash\0")
                     .expect("Should always have null terminator");
-                let args: &[&[u8]] = &[b"bash\0",];
+                let args: &[&[u8]] = &[b"bash\0"];
 
                 let args: Vec<&'static CStr> = args
                     .iter()
@@ -162,7 +163,6 @@ fn set_nonblock(fd: &OwnedFd) {
     nix::fcntl::fcntl(fd.as_raw_fd(), nix::fcntl::FcntlArg::F_SETFL(flags)).unwrap();
 }
 
-
 pub fn cursor_to_buffer_position(cursor_pos: &CursorState, buf: &[u8]) -> usize {
     let line_start = buf
         .split(|b| *b == b'\n')
@@ -194,9 +194,6 @@ fn insert_data_at_position(data: &[u8], pos: usize, buf: &mut Vec<u8>) {
     buf[pos..pos + data_to_copy.len()].copy_from_slice(data_to_copy);
     buf.extend_from_slice(data_to_push);
 }
-
-
-
 
 fn split_format_data_for_scrollback(
     tags: Vec<FormatTag>,
@@ -230,8 +227,7 @@ fn split_format_data_for_scrollback(
     }
 }
 
-#[derive(Debug, Clone)]
-#[derive(PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CursorPos {
     pub x: usize,
     pub y: usize,
@@ -251,7 +247,6 @@ pub struct CursorState {
     pub(crate) italic: bool,
     pub foreground_color: TerminalColor,
     pub background_color: TerminalColor,
-
 }
 impl Default for CursorState {
     fn default() -> Self {
@@ -271,17 +266,17 @@ impl Default for CursorState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TerminalColor {
     Default,
-    Faint,          // 2
-    Italic,         // 3
-    Underline,      // 4
-    BlinkSlow,      // 5
-    BlinkRapid,     // 6
-    Reverse,        // 7
-    Conceal,        // 8
-    Reveal,         // 28 (companion to 8)
-    NotItalic,      // 23
-    NotUnderline,   // 24
-    NormalIntensity,// 22
+    Faint,           // 2
+    Italic,          // 3
+    Underline,       // 4
+    BlinkSlow,       // 5
+    BlinkRapid,      // 6
+    Reverse,         // 7
+    Conceal,         // 8
+    Reveal,          // 28 (companion to 8)
+    NotItalic,       // 23
+    NotUnderline,    // 24
+    NormalIntensity, // 22
     ForegroundBlack,
     ForegroundRed,
     ForegroundGreen,
@@ -331,15 +326,31 @@ impl TerminalColor {
             SelectGraphicRendition::ForegroundMagenta => Some(TerminalColor::ForegroundMagenta),
             SelectGraphicRendition::ForegroundCyan => Some(TerminalColor::ForegroundCyan),
             SelectGraphicRendition::ForegroundWhite => Some(TerminalColor::ForegroundWhite),
-            SelectGraphicRendition::ForegroundBrightBlack => Some(TerminalColor::ForegroundBrightBlack),
+            SelectGraphicRendition::ForegroundBrightBlack => {
+                Some(TerminalColor::ForegroundBrightBlack)
+            }
             SelectGraphicRendition::ForegroundBrightRed => Some(TerminalColor::ForegroundBrightRed),
-            SelectGraphicRendition::ForegroundBrightGreen => Some(TerminalColor::ForegroundBrightGreen),
-            SelectGraphicRendition::ForegroundBrightYellow => Some(TerminalColor::ForegroundBrightYellow),
-            SelectGraphicRendition::ForegroundBrightBlue => Some(TerminalColor::ForegroundBrightBlue),
-            SelectGraphicRendition::ForegroundBrightMagenta => Some(TerminalColor::ForegroundBrightMagenta),
-            SelectGraphicRendition::ForegroundBrightCyan => Some(TerminalColor::ForegroundBrightCyan),
-            SelectGraphicRendition::ForegroundBrightWhite => Some(TerminalColor::ForegroundBrightWhite),
-            SelectGraphicRendition::ForegroundTrueColor(r, g, b) => Some(TerminalColor::ForegroundRgb(r, g, b)),
+            SelectGraphicRendition::ForegroundBrightGreen => {
+                Some(TerminalColor::ForegroundBrightGreen)
+            }
+            SelectGraphicRendition::ForegroundBrightYellow => {
+                Some(TerminalColor::ForegroundBrightYellow)
+            }
+            SelectGraphicRendition::ForegroundBrightBlue => {
+                Some(TerminalColor::ForegroundBrightBlue)
+            }
+            SelectGraphicRendition::ForegroundBrightMagenta => {
+                Some(TerminalColor::ForegroundBrightMagenta)
+            }
+            SelectGraphicRendition::ForegroundBrightCyan => {
+                Some(TerminalColor::ForegroundBrightCyan)
+            }
+            SelectGraphicRendition::ForegroundBrightWhite => {
+                Some(TerminalColor::ForegroundBrightWhite)
+            }
+            SelectGraphicRendition::ForegroundTrueColor(r, g, b) => {
+                Some(TerminalColor::ForegroundRgb(r, g, b))
+            }
             SelectGraphicRendition::BackgroundBlack => Some(TerminalColor::BackgroundBlack),
             SelectGraphicRendition::BackgroundRed => Some(TerminalColor::BackgroundRed),
             SelectGraphicRendition::BackgroundGreen => Some(TerminalColor::BackgroundGreen),
@@ -348,29 +359,40 @@ impl TerminalColor {
             SelectGraphicRendition::BackgroundMagenta => Some(TerminalColor::BackgroundMagenta),
             SelectGraphicRendition::BackgroundCyan => Some(TerminalColor::BackgroundCyan),
             SelectGraphicRendition::BackgroundWhite => Some(TerminalColor::BackgroundWhite),
-            SelectGraphicRendition::BackgroundBrightBlack => Some(TerminalColor::BackgroundBrightBlack),
+            SelectGraphicRendition::BackgroundBrightBlack => {
+                Some(TerminalColor::BackgroundBrightBlack)
+            }
             SelectGraphicRendition::BackgroundBrightRed => Some(TerminalColor::BackgroundBrightRed),
-            SelectGraphicRendition::BackgroundBrightGreen => Some(TerminalColor::BackgroundBrightGreen),
-            SelectGraphicRendition::BackgroundBrightYellow => Some(TerminalColor::BackgroundBrightYellow),
-            SelectGraphicRendition::BackgroundBrightBlue => Some(TerminalColor::BackgroundBrightBlue),
-            SelectGraphicRendition::BackgroundBrightMagenta => Some(TerminalColor::BackgroundBrightMagenta),
-            SelectGraphicRendition::BackgroundBrightCyan => Some(TerminalColor::BackgroundBrightCyan),
-            SelectGraphicRendition::BackgroundBrightWhite => Some(TerminalColor::BackgroundBrightWhite),
-            SelectGraphicRendition::BackgroundTrueColor(r, g, b) => Some(TerminalColor::BackgroundTrueColor(r, g, b)),
-            SelectGraphicRendition::Foreground8Bit(n) => {
-                Some(TerminalColor::Foreground8Bit(n))
-            },
-            SelectGraphicRendition::Background8Bit(n) => {
-                Some(TerminalColor::Background8Bit(n))
-            },
+            SelectGraphicRendition::BackgroundBrightGreen => {
+                Some(TerminalColor::BackgroundBrightGreen)
+            }
+            SelectGraphicRendition::BackgroundBrightYellow => {
+                Some(TerminalColor::BackgroundBrightYellow)
+            }
+            SelectGraphicRendition::BackgroundBrightBlue => {
+                Some(TerminalColor::BackgroundBrightBlue)
+            }
+            SelectGraphicRendition::BackgroundBrightMagenta => {
+                Some(TerminalColor::BackgroundBrightMagenta)
+            }
+            SelectGraphicRendition::BackgroundBrightCyan => {
+                Some(TerminalColor::BackgroundBrightCyan)
+            }
+            SelectGraphicRendition::BackgroundBrightWhite => {
+                Some(TerminalColor::BackgroundBrightWhite)
+            }
+            SelectGraphicRendition::BackgroundTrueColor(r, g, b) => {
+                Some(TerminalColor::BackgroundTrueColor(r, g, b))
+            }
+            SelectGraphicRendition::Foreground8Bit(n) => Some(TerminalColor::Foreground8Bit(n)),
+            SelectGraphicRendition::Background8Bit(n) => Some(TerminalColor::Background8Bit(n)),
             SelectGraphicRendition::BlinkSlow => Some(TerminalColor::BlinkSlow),
             SelectGraphicRendition::BlinkRapid => Some(TerminalColor::BlinkRapid),
             _ => None,
         }
     }
 
-
-   pub fn index_to_rgb(&self, index: u32) -> (u8, u8, u8) {
+    pub fn index_to_rgb(&self, index: u32) -> (u8, u8, u8) {
         if index >= 16 && index <= 231 {
             // Convert index to RGB in the 6x6x6 color cube
             let index = index - 16;
@@ -401,8 +423,6 @@ fn ranges_overlap(a: Range<usize>, b: Range<usize>) -> bool {
     true
 }
 
-
-
 ioctl_write_ptr_bad!(set_window_size, nix::libc::TIOCSWINSZ, nix::pty::Winsize);
 
 pub struct TerminalData<T> {
@@ -411,7 +431,7 @@ pub struct TerminalData<T> {
 }
 pub struct TerminalEmulator {
     output_buf: AnsiParser,
-    buf:TerminalBuffer,
+    buf: TerminalBuffer,
     decckm_mode: bool,
     format_tracker: FormatTracker,
     pub(crate) cursor_state: CursorState,
@@ -443,8 +463,6 @@ impl TerminalEmulator {
         }
     }
 
-
-
     pub fn write(&mut self, to_write: TerminalInput) {
         match to_write.to_payload(self.decckm_mode) {
             TerminalInputPayload::Single(c) => {
@@ -462,253 +480,238 @@ impl TerminalEmulator {
         };
     }
 
-
     pub fn read(&mut self) {
-            let mut buf = vec![0u8; 4096];
-            let mut ret = Ok(0);
-            while ret.is_ok() {
-                ret = nix::unistd::read(self.fd.as_raw_fd(), &mut buf);
-                let Ok(read_size) = ret else {
-                    break;
-                };
+        let mut buf = vec![0u8; 4096];
+        let mut ret = Ok(0);
+        while ret.is_ok() {
+            ret = nix::unistd::read(self.fd.as_raw_fd(), &mut buf);
+            let Ok(read_size) = ret else {
+                break;
+            };
 
-                let incoming = &buf[0..read_size];
-                debug!("Incoming data: {:?}", std::str::from_utf8(incoming));
-                let parsed = self.output_buf.push(incoming);
-                for segment in parsed {
-                    match segment {
-                        TerminalOutput::Data(data) => {
-                            let response = self
-                                .buf
-                                .insert_data(&self.cursor_state.pos, &data);
-                            self.format_tracker.push_range_adjustment(response.insertion_range);
-                            self.format_tracker
-                                .push_range(&self.cursor_state, response.written_range);
-                            self.cursor_state.pos = response.new_cursor_pos;
-                        }
-                        TerminalOutput::SetCursorVisibility(visible) => {
-                            self.cursor_state.visible = visible;
-                        }
-                        TerminalOutput::SetCursorPos { x, y } => {
-                            if let Some(x) = x {
-                                self.cursor_state.pos.x = x - 1;
-                            }
-                            if let Some(y) = y {
-                                self.cursor_state.pos.y = y - 1;
-                            }
-                        }
-                        TerminalOutput::InsertLines(num_lines) => {
-                            let response = self
-                                .buf
-                                .insert_lines(&self.cursor_state.pos, num_lines);
-                            self.format_tracker.delete_range(response.deleted_range);
-                            self.format_tracker
-                                .push_range_adjustment(response.inserted_range);
-                        }
-                        TerminalOutput::ClearForwards => {
-                            if let Some(buf_pos) =
-                                self.buf.clear_forwards(&self.cursor_state.pos)
-                            {
-                                self.format_tracker
-                                    .push_range(&self.cursor_state, buf_pos..usize::MAX);
-                            }
-                        }
-                        TerminalOutput::SetCursorPosRel { x, y } => {
-                            if let Some(x) = x {
-                                let x: i64 = x.into();
-                                let current_x: i64 = self
-                                    .cursor_state
-                                    .pos
-                                    .x
-                                    .try_into()
-                                    .expect("x position larger than i64 can handle");
-                                self.cursor_state.pos.x = (current_x + x).max(0) as usize;
-                            }
-                            if let Some(y) = y {
-                                let y: i64 = y.into();
-                                let current_y: i64 = self
-                                    .cursor_state
-                                    .pos
-                                    .y
-                                    .try_into()
-                                    .expect("y position larger than i64 can handle");
-                                self.cursor_state.pos.y = (current_y + y).max(0) as usize;
-                            }
-                        }
-
-                        TerminalOutput::CarriageReturn => {
-                            self.cursor_state.pos.x = 0;
-                        }
-                        TerminalOutput::Newline => {
-                            self.cursor_state.pos.y += 1;
-                        }
-                        TerminalOutput::Backspace => {
-                            if self.cursor_state.pos.x >= 1 {
-                                self.cursor_state.pos.x -= 1;
-                            }
-                        }
-                        TerminalOutput::Delete(num_chars) => {
-                            let deleted_buf_range = self
-                                .buf
-                                .delete_forwards(&self.cursor_state.pos, num_chars);
-                            if let Some(range) = deleted_buf_range {
-                                self.format_tracker.delete_range(range);
-                            }
-                        }
-                        TerminalOutput::InsertSpaces(num_spaces) => {
-                            let response = self
-                                .buf
-                                .insert_spaces(&self.cursor_state.pos, num_spaces);
-
-                            self.format_tracker
-                                .push_range_adjustment(response.insertion_range);
-                        }
-                        TerminalOutput::ClearLineForwards => {
-                            if let Some(range) = self
-                                .buf
-                                .clear_line_forwards(&self.cursor_state.pos)
-                            {
-                                self.format_tracker.delete_range(range);
-                            }
-                        }
-
-                        TerminalOutput::ClearAll => {
-                            self.format_tracker
-                                .push_range(&self.cursor_state, 0..usize::MAX);
-                            self.buf.clear_all();
-                        }
-                        TerminalOutput::Sgr(sgr) => {
-                            if let Some(color) = TerminalColor::from_sgr(sgr) {
-                                // Handle foreground/background colors separately
-                                match &color {
-                                    TerminalColor::ForegroundBlack
-                                    | TerminalColor::ForegroundRed
-                                    | TerminalColor::ForegroundGreen
-                                    | TerminalColor::ForegroundYellow
-                                    | TerminalColor::ForegroundBlue
-                                    | TerminalColor::ForegroundMagenta
-                                    | TerminalColor::ForegroundCyan
-                                    | TerminalColor::ForegroundWhite
-                                    | TerminalColor::ForegroundBrightBlack
-                                    | TerminalColor::ForegroundBrightRed
-                                    | TerminalColor::ForegroundBrightGreen
-                                    | TerminalColor::ForegroundBrightYellow
-                                    | TerminalColor::ForegroundBrightBlue
-                                    | TerminalColor::ForegroundBrightMagenta
-                                    | TerminalColor::ForegroundBrightCyan
-                                    | TerminalColor::ForegroundBrightWhite
-                                    | TerminalColor::ForegroundRgb(_, _, _)
-                                    | TerminalColor::Foreground8Bit(_) => {
-                                        self.cursor_state.foreground_color = color;
-                                    }
-                                    TerminalColor::BackgroundBlack
-                                    | TerminalColor::BackgroundRed
-                                    | TerminalColor::BackgroundGreen
-                                    | TerminalColor::BackgroundYellow
-                                    | TerminalColor::BackgroundBlue
-                                    | TerminalColor::BackgroundMagenta
-                                    | TerminalColor::BackgroundCyan
-                                    | TerminalColor::BackgroundWhite
-                                    | TerminalColor::BackgroundBrightBlack
-                                    | TerminalColor::BackgroundBrightRed
-                                    | TerminalColor::BackgroundBrightGreen
-                                    | TerminalColor::BackgroundBrightYellow
-                                    | TerminalColor::BackgroundBrightBlue
-                                    | TerminalColor::BackgroundBrightMagenta
-                                    | TerminalColor::BackgroundBrightCyan
-                                    | TerminalColor::BackgroundBrightWhite
-                                    | TerminalColor::BackgroundTrueColor(_, _, _)
-                                    | TerminalColor::Background8Bit(_) => {
-                                        self.cursor_state.background_color = color;
-                                    }
-                                    // Set foreground color
-                                    _ => {
-                                        self.cursor_state.foreground_color = color;
-                                    }
-
-                                    _ => {
-                                        // Handle other attributes
-                                        if sgr == SelectGraphicRendition::Reset {
-                                            self.cursor_state.foreground_color = self.cursor_state.foreground_color;
-                                            self.cursor_state.background_color = TerminalColor::Default;
-                                            self.cursor_state.bold = false;
-                                            self.cursor_state.italic = false;
-                                            self.cursor_state.blink_mode = BlinkMode::NoBlink;
-                                        } else if sgr == SelectGraphicRendition::Bold {
-                                            self.cursor_state.bold = true;
-                                        } else if sgr == SelectGraphicRendition::Italic {
-                                            self.cursor_state.italic = true;
-                                        } else if sgr == SelectGraphicRendition::BlinkSlow {
-                                            self.cursor_state.blink_mode = BlinkMode::SlowBlink;
-                                        } else if sgr == SelectGraphicRendition::BlinkRapid {
-                                            self.cursor_state.blink_mode = BlinkMode::RapidBlink;
-                                        }
-                                    }
-                                }
-                            } else {
-                                // Handle cases where from_sgr returns None
-                                if sgr == SelectGraphicRendition::Reset {
-
-                                    self.cursor_state.foreground_color = TerminalColor::Default;
-                                    self.cursor_state.background_color = TerminalColor::Default;
-                                    self.cursor_state.bold = false;
-                                    self.cursor_state.italic = false;
-                                    self.cursor_state.blink_mode = BlinkMode::NoBlink;
-                                } else if sgr == SelectGraphicRendition::Bold {
-                                    self.cursor_state.bold = true;
-                                } else if sgr == SelectGraphicRendition::Italic {
-                                    self.cursor_state.italic = true;
-                                } else if sgr == SelectGraphicRendition::BlinkSlow {
-                                    self.cursor_state.blink_mode = BlinkMode::SlowBlink;
-                                } else if sgr == SelectGraphicRendition::BlinkRapid {
-                                    self.cursor_state.blink_mode = BlinkMode::RapidBlink;
-                                } else {
-                                    warn!("Unhandled sgr: {:?}", sgr);
-                                }
-                            }
-                        }
-                        TerminalOutput::SetMode(mode) => match mode {
-                            Mode::Decckm => {
-                                self.decckm_mode = true;
-                            }
-                            Mode::Dectcem => {
-                                self.cursor_state.visible = true;
-                            }
-                            Mode::Decawm => {
-                                self.buf.set_auto_wrap(true);
-                            }
-                            _ => {
-                                warn!("unhandled set mode: {mode:?}");
-                            }
-                        },
-                        TerminalOutput::ResetMode(mode) => match mode {
-                            Mode::Decckm => {
-                                self.decckm_mode = false;
-                            }
-                            Mode::Dectcem => {
-                                self.cursor_state.visible = false;
-                            }
-                            Mode::Decawm => {
-                                self.buf.set_auto_wrap(false);
-                            }
-                            _ => {
-                                warn!("unhandled reset mode: {mode:?}");
-                            }
-                        },
-                        TerminalOutput::Invalid => {}
+            let incoming = &buf[0..read_size];
+            debug!("Incoming data: {:?}", std::str::from_utf8(incoming));
+            let parsed = self.output_buf.push(incoming);
+            for segment in parsed {
+                match segment {
+                    TerminalOutput::Data(data) => {
+                        let response = self.buf.insert_data(&self.cursor_state.pos, &data);
+                        self.format_tracker
+                            .push_range_adjustment(response.insertion_range);
+                        self.format_tracker
+                            .push_range(&self.cursor_state, response.written_range);
+                        self.cursor_state.pos = response.new_cursor_pos;
                     }
-                }
-            }
+                    TerminalOutput::SetCursorVisibility(visible) => {
+                        self.cursor_state.visible = visible;
+                    }
+                    TerminalOutput::SetCursorPos { x, y } => {
+                        if let Some(x) = x {
+                            self.cursor_state.pos.x = x - 1;
+                        }
+                        if let Some(y) = y {
+                            self.cursor_state.pos.y = y - 1;
+                        }
+                    }
+                    TerminalOutput::InsertLines(num_lines) => {
+                        let response = self.buf.insert_lines(&self.cursor_state.pos, num_lines);
+                        self.format_tracker.delete_range(response.deleted_range);
+                        self.format_tracker
+                            .push_range_adjustment(response.inserted_range);
+                    }
+                    TerminalOutput::ClearForwards => {
+                        if let Some(buf_pos) = self.buf.clear_forwards(&self.cursor_state.pos) {
+                            self.format_tracker
+                                .push_range(&self.cursor_state, buf_pos..usize::MAX);
+                        }
+                    }
+                    TerminalOutput::SetCursorPosRel { x, y } => {
+                        if let Some(x) = x {
+                            let x: i64 = x.into();
+                            let current_x: i64 = self
+                                .cursor_state
+                                .pos
+                                .x
+                                .try_into()
+                                .expect("x position larger than i64 can handle");
+                            self.cursor_state.pos.x = (current_x + x).max(0) as usize;
+                        }
+                        if let Some(y) = y {
+                            let y: i64 = y.into();
+                            let current_y: i64 = self
+                                .cursor_state
+                                .pos
+                                .y
+                                .try_into()
+                                .expect("y position larger than i64 can handle");
+                            self.cursor_state.pos.y = (current_y + y).max(0) as usize;
+                        }
+                    }
 
+                    TerminalOutput::CarriageReturn => {
+                        self.cursor_state.pos.x = 0;
+                    }
+                    TerminalOutput::Newline => {
+                        self.cursor_state.pos.y += 1;
+                    }
+                    TerminalOutput::Backspace => {
+                        if self.cursor_state.pos.x >= 1 {
+                            self.cursor_state.pos.x -= 1;
+                        }
+                    }
+                    TerminalOutput::Delete(num_chars) => {
+                        let deleted_buf_range =
+                            self.buf.delete_forwards(&self.cursor_state.pos, num_chars);
+                        if let Some(range) = deleted_buf_range {
+                            self.format_tracker.delete_range(range);
+                        }
+                    }
+                    TerminalOutput::InsertSpaces(num_spaces) => {
+                        let response = self.buf.insert_spaces(&self.cursor_state.pos, num_spaces);
 
+                        self.format_tracker
+                            .push_range_adjustment(response.insertion_range);
+                    }
+                    TerminalOutput::ClearLineForwards => {
+                        if let Some(range) = self.buf.clear_line_forwards(&self.cursor_state.pos) {
+                            self.format_tracker.delete_range(range);
+                        }
+                    }
 
-            if let Err(e) = ret {
-                if e != Errno::EAGAIN {
-                    error!("Failed to read: {e}");
+                    TerminalOutput::ClearAll => {
+                        self.format_tracker
+                            .push_range(&self.cursor_state, 0..usize::MAX);
+                        self.buf.clear_all();
+                    }
+                    TerminalOutput::Sgr(sgr) => {
+                        if let Some(color) = TerminalColor::from_sgr(sgr) {
+                            // Handle foreground/background colors separately
+                            match &color {
+                                TerminalColor::ForegroundBlack
+                                | TerminalColor::ForegroundRed
+                                | TerminalColor::ForegroundGreen
+                                | TerminalColor::ForegroundYellow
+                                | TerminalColor::ForegroundBlue
+                                | TerminalColor::ForegroundMagenta
+                                | TerminalColor::ForegroundCyan
+                                | TerminalColor::ForegroundWhite
+                                | TerminalColor::ForegroundBrightBlack
+                                | TerminalColor::ForegroundBrightRed
+                                | TerminalColor::ForegroundBrightGreen
+                                | TerminalColor::ForegroundBrightYellow
+                                | TerminalColor::ForegroundBrightBlue
+                                | TerminalColor::ForegroundBrightMagenta
+                                | TerminalColor::ForegroundBrightCyan
+                                | TerminalColor::ForegroundBrightWhite
+                                | TerminalColor::ForegroundRgb(_, _, _)
+                                | TerminalColor::Foreground8Bit(_) => {
+                                    self.cursor_state.foreground_color = color;
+                                }
+                                TerminalColor::BackgroundBlack
+                                | TerminalColor::BackgroundRed
+                                | TerminalColor::BackgroundGreen
+                                | TerminalColor::BackgroundYellow
+                                | TerminalColor::BackgroundBlue
+                                | TerminalColor::BackgroundMagenta
+                                | TerminalColor::BackgroundCyan
+                                | TerminalColor::BackgroundWhite
+                                | TerminalColor::BackgroundBrightBlack
+                                | TerminalColor::BackgroundBrightRed
+                                | TerminalColor::BackgroundBrightGreen
+                                | TerminalColor::BackgroundBrightYellow
+                                | TerminalColor::BackgroundBrightBlue
+                                | TerminalColor::BackgroundBrightMagenta
+                                | TerminalColor::BackgroundBrightCyan
+                                | TerminalColor::BackgroundBrightWhite
+                                | TerminalColor::BackgroundTrueColor(_, _, _)
+                                | TerminalColor::Background8Bit(_) => {
+                                    self.cursor_state.background_color = color;
+                                }
+                                // Set foreground color
+                                _ => {
+                                    self.cursor_state.foreground_color = color;
+                                }
+
+                                _ => {
+                                    // Handle other attributes
+                                    if sgr == SelectGraphicRendition::Reset {
+                                        self.cursor_state.foreground_color =
+                                            self.cursor_state.foreground_color;
+                                        self.cursor_state.background_color = TerminalColor::Default;
+                                        self.cursor_state.bold = false;
+                                        self.cursor_state.italic = false;
+                                        self.cursor_state.blink_mode = BlinkMode::NoBlink;
+                                    } else if sgr == SelectGraphicRendition::Bold {
+                                        self.cursor_state.bold = true;
+                                    } else if sgr == SelectGraphicRendition::Italic {
+                                        self.cursor_state.italic = true;
+                                    } else if sgr == SelectGraphicRendition::BlinkSlow {
+                                        self.cursor_state.blink_mode = BlinkMode::SlowBlink;
+                                    } else if sgr == SelectGraphicRendition::BlinkRapid {
+                                        self.cursor_state.blink_mode = BlinkMode::RapidBlink;
+                                    }
+                                }
+                            }
+                        } else {
+                            // Handle cases where from_sgr returns None
+                            if sgr == SelectGraphicRendition::Reset {
+                                self.cursor_state.foreground_color = TerminalColor::Default;
+                                self.cursor_state.background_color = TerminalColor::Default;
+                                self.cursor_state.bold = false;
+                                self.cursor_state.italic = false;
+                                self.cursor_state.blink_mode = BlinkMode::NoBlink;
+                            } else if sgr == SelectGraphicRendition::Bold {
+                                self.cursor_state.bold = true;
+                            } else if sgr == SelectGraphicRendition::Italic {
+                                self.cursor_state.italic = true;
+                            } else if sgr == SelectGraphicRendition::BlinkSlow {
+                                self.cursor_state.blink_mode = BlinkMode::SlowBlink;
+                            } else if sgr == SelectGraphicRendition::BlinkRapid {
+                                self.cursor_state.blink_mode = BlinkMode::RapidBlink;
+                            } else {
+                                warn!("Unhandled sgr: {:?}", sgr);
+                            }
+                        }
+                    }
+                    TerminalOutput::SetMode(mode) => match mode {
+                        Mode::Decckm => {
+                            self.decckm_mode = true;
+                        }
+                        Mode::Dectcem => {
+                            self.cursor_state.visible = true;
+                        }
+                        Mode::Decawm => {
+                            self.buf.set_auto_wrap(true);
+                        }
+                        _ => {
+                            warn!("unhandled set mode: {mode:?}");
+                        }
+                    },
+                    TerminalOutput::ResetMode(mode) => match mode {
+                        Mode::Decckm => {
+                            self.decckm_mode = false;
+                        }
+                        Mode::Dectcem => {
+                            self.cursor_state.visible = false;
+                        }
+                        Mode::Decawm => {
+                            self.buf.set_auto_wrap(false);
+                        }
+                        _ => {
+                            warn!("unhandled reset mode: {mode:?}");
+                        }
+                    },
+                    TerminalOutput::Invalid => {}
                 }
             }
         }
 
+        if let Err(e) = ret {
+            if e != Errno::EAGAIN {
+                error!("Failed to read: {e}");
+            }
+        }
+    }
 
     pub fn data(&self) -> TerminalData<&[u8]> {
         self.buf.data()
@@ -722,9 +725,9 @@ impl TerminalEmulator {
         self.cursor_state.pos.clone()
     }
     pub fn set_win_size(&mut self, width_chars: usize, height_chars: usize) {
-        let response =
-            self.buf
-                .set_win_size(width_chars, height_chars, &self.cursor_state.pos);
+        let response = self
+            .buf
+            .set_win_size(width_chars, height_chars, &self.cursor_state.pos);
         self.cursor_state.pos = response.new_cursor_pos;
 
         if response.changed {
@@ -741,4 +744,3 @@ impl TerminalEmulator {
         }
     }
 }
-

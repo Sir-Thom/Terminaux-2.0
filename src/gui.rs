@@ -1,10 +1,15 @@
-use std::sync::Arc;
-use crate::terminal_emulator::{ cursor_to_buffer_position, BlinkMode, CursorPos, CursorState, TerminalColor, TerminalEmulator, TerminalInput};
-use eframe::egui::{ self, text::LayoutJob, CentralPanel, Color32, DragValue, Event, FontData, FontDefinitions,
-                    FontFamily, FontId, InputState, Key, Modifiers, Rect, TextFormat, TextStyle, Ui};
 use crate::terminal_emulator::format_tracker::{FormatTag, FormatTracker};
-use std::borrow::Cow;
+use crate::terminal_emulator::{
+    cursor_to_buffer_position, BlinkMode, CursorPos, CursorState, TerminalColor, TerminalEmulator,
+    TerminalInput,
+};
+use eframe::egui::{
+    self, text::LayoutJob, CentralPanel, Color32, DragValue, Event, FontData, FontDefinitions,
+    FontFamily, FontId, InputState, Key, Modifiers, Rect, TextFormat, TextStyle, Ui,
+};
 use log::info;
+use std::borrow::Cow;
+use std::sync::Arc;
 
 const REGULAR_FONT_NAME: &str = "JetBrainsMono-Regular";
 const BOLD_FONT_NAME: &str = "JetBrainsMono-Bold";
@@ -29,15 +34,19 @@ impl TerminalFonts {
         let regular = FontFamily::Name(REGULAR_FONT_NAME.to_string().into());
         let italic = FontFamily::Name(ITALIC_FONT_NAME.to_string().into());
 
-        TerminalFonts { regular, bold, italic }
+        TerminalFonts {
+            regular,
+            bold,
+            italic,
+        }
     }
 
-    fn get_family(&self, is_bold: bool,is_italic:bool) -> FontFamily {
+    fn get_family(&self, is_bold: bool, is_italic: bool) -> FontFamily {
         if is_bold {
             self.bold.clone()
-        }else if is_italic  {
+        } else if is_italic {
             self.italic.clone()
-        }else {
+        } else {
             self.regular.clone()
         }
     }
@@ -85,21 +94,20 @@ fn terminal_color_to_egui(default_color: &Color32, color: &TerminalColor) -> Col
             let (r, g, b) = index_to_rgb(*n);
             Color32::from_rgb(r, g, b)
         }
-        _ =>  default_color.clone()
+        _ => default_color.clone(),
     }
 }
 
 struct TerminalOutputRenderResponse {
-scrollback_area: Rect,
-canvas_area: Rect,
+    scrollback_area: Rect,
+    canvas_area: Rect,
 }
-
 
 fn render_terminal_output(
     ui: &mut egui::Ui,
     terminal_emulator: &TerminalEmulator,
     font_size: f32,
-    blink_state: bool,  // Add blink_state parameter
+    blink_state: bool, // Add blink_state parameter
 ) -> TerminalOutputRenderResponse {
     let terminal_data = terminal_emulator.data();
     let mut scrollback_data = terminal_data.scrollback;
@@ -127,16 +135,18 @@ fn render_terminal_output(
                 scrollback_data,
                 &format_data.scrollback,
                 font_size,
-                blink_state
-            ).rect;
+                blink_state,
+            )
+            .rect;
 
             let canvas_area = add_terminal_data_to_ui(
                 ui,
                 canvas_data,
                 &format_data.visible,
                 font_size,
-                blink_state
-            ).rect;
+                blink_state,
+            )
+            .rect;
 
             TerminalOutputRenderResponse {
                 scrollback_area,
@@ -174,12 +184,8 @@ fn create_terminal_output_layout_job(
     let text_style = &style.text_styles[&TextStyle::Monospace];
     let text = String::from_utf8_lossy(data).to_string();
 
-    let mut job = egui::text::LayoutJob::simple(
-        text,
-        text_style.clone(),
-        style.visuals.text_color(),
-        width,
-    );
+    let mut job =
+        egui::text::LayoutJob::simple(text, text_style.clone(), style.visuals.text_color(), width);
 
     job.wrap.break_anywhere = true;
     let textformat = job.sections[0].format.clone();
@@ -199,8 +205,8 @@ fn write_input_to_terminal(input: &InputState, terminal_emulator: &mut TerminalE
                 pressed: true,
                 ..
             } => {
-            terminal_emulator.write(TerminalInput::Enter);
-        }
+                terminal_emulator.write(TerminalInput::Enter);
+            }
             // https://github.com/emilk/egui/issues/3653
             Event::Copy => {
                 terminal_emulator.write(TerminalInput::Ctrl(b'c'));
@@ -278,48 +284,43 @@ fn write_input_to_terminal(input: &InputState, terminal_emulator: &mut TerminalE
             }
             _ => (),
         };
-
     }
 }
 fn index_to_rgb(index: u8) -> (u8, u8, u8) {
-let index = index as u32;
-if index < 16 {
-// Basic 16 colors
-match index {
-0 => (0, 0, 0),       // Black
-1 => (128, 0, 0),     // Red
-2 => (0, 128, 0),     // Green
-3 => (128, 128, 0),   // Yellow
-4 => (0, 0, 128),     // Blue
-5 => (128, 0, 128),   // Magenta
-6 => (0, 128, 128),   // Cyan
-7 => (192, 192, 192), // White
-8 => (128, 128, 128), // Bright black
-9 => (255, 0, 0),     // Bright red
-10 => (0, 255, 0),    // Bright green
-11 => (255, 255, 0), // Bright yellow
-12 => (0, 0, 255),   // Bright blue
-13 => (255, 0, 255), // Bright magenta
-14 => (0, 255, 255), // Bright cyan
-15 => (255, 255, 255), // Bright white
-_ => (0, 0, 0),
-}
-} else if index >= 16 && index <= 231 {
-// 6x6x6 color cube
-let index = index - 16;
-let r = index / 36;
-let g = (index % 36) / 6;
-let b = index % 6;
-(
-(r * 51) as u8,
-(g * 51) as u8,
-(b * 51) as u8,
-)
-} else {
-// Grayscale
-let gray = 8 + (index - 232) as u8 * 10;
-(gray, gray, gray)
-}
+    let index = index as u32;
+    if index < 16 {
+        // Basic 16 colors
+        match index {
+            0 => (0, 0, 0),        // Black
+            1 => (128, 0, 0),      // Red
+            2 => (0, 128, 0),      // Green
+            3 => (128, 128, 0),    // Yellow
+            4 => (0, 0, 128),      // Blue
+            5 => (128, 0, 128),    // Magenta
+            6 => (0, 128, 128),    // Cyan
+            7 => (192, 192, 192),  // White
+            8 => (128, 128, 128),  // Bright black
+            9 => (255, 0, 0),      // Bright red
+            10 => (0, 255, 0),     // Bright green
+            11 => (255, 255, 0),   // Bright yellow
+            12 => (0, 0, 255),     // Bright blue
+            13 => (255, 0, 255),   // Bright magenta
+            14 => (0, 255, 255),   // Bright cyan
+            15 => (255, 255, 255), // Bright white
+            _ => (0, 0, 0),
+        }
+    } else if index >= 16 && index <= 231 {
+        // 6x6x6 color cube
+        let index = index - 16;
+        let r = index / 36;
+        let g = (index % 36) / 6;
+        let b = index % 6;
+        ((r * 51) as u8, (g * 51) as u8, (b * 51) as u8)
+    } else {
+        // Grayscale
+        let gray = 8 + (index - 232) as u8 * 10;
+        (gray, gray, gray)
+    }
 }
 
 fn get_char_size(ctx: &egui::Context, font_size: f32) -> (f32, f32) {
@@ -374,24 +375,22 @@ fn character_to_cursor_offset(
     let x_offset = character_pos.x as f32 * character_size.0;
     let y_offset = (character_pos.y as i64 - num_lines as i64) as f32 * character_size.1;
     (x_offset, y_offset)
-
-
 }
 
 fn paint_cursor(
     label_rect: Rect,
     character_size: &(f32, f32),
     cursor_pos: &CursorPos,
-   // terminal_buf: &[u8],
+    // terminal_buf: &[u8],
     ui: &mut Ui,
 ) {
     let painter = ui.painter();
 
-  //  let bottom = label_rect.bottom();
+    //  let bottom = label_rect.bottom();
     let top = label_rect.top();
     let left = label_rect.left();
-   // let cursor_offset = character_to_cursor_offset(cursor_pos, character_size, terminal_buf);
-   // let cursor_x = cursor_offset.0 - left;
+    // let cursor_offset = character_to_cursor_offset(cursor_pos, character_size, terminal_buf);
+    // let cursor_x = cursor_offset.0 - left;
     //let cursor_y = bottom + cursor_offset.1;
     let y_offset = cursor_pos.y as f32 * character_size.1;
     let x_offset = cursor_pos.x as f32 * character_size.0 - left;
@@ -400,15 +399,10 @@ fn paint_cursor(
         Rect::from_min_size(
             egui::pos2(left + x_offset, top + y_offset),
             egui::vec2(character_size.0, character_size.1),
-
         ),
         0.0,
         Color32::GRAY,
     );
-
-
-
-
 }
 
 fn setup_fonts(ctx: &egui::Context) {
@@ -416,16 +410,22 @@ fn setup_fonts(ctx: &egui::Context) {
 
     fonts.font_data.insert(
         REGULAR_FONT_NAME.to_owned(),
-        Arc::from(FontData::from_static(include_bytes!("../res/JetBrainsMono-Regular.ttf"))),
+        Arc::from(FontData::from_static(include_bytes!(
+            "../res/JetBrainsMono-Regular.ttf"
+        ))),
     );
 
     fonts.font_data.insert(
         BOLD_FONT_NAME.to_owned(),
-        Arc::from(FontData::from_static(include_bytes!("../res/JetBrainsMono-Bold.ttf"))),
+        Arc::from(FontData::from_static(include_bytes!(
+            "../res/JetBrainsMono-Bold.ttf"
+        ))),
     );
     fonts.font_data.insert(
         ITALIC_FONT_NAME.to_owned(),
-        Arc::from(FontData::from_static(include_bytes!("../res/JetBrainsMono-Italic.ttf"))),
+        Arc::from(FontData::from_static(include_bytes!(
+            "../res/JetBrainsMono-Italic.ttf"
+        ))),
     );
 
     fonts
@@ -492,10 +492,11 @@ fn add_terminal_data_to_ui(
         section_format.font_id.size = font_size;
 
         // Set both foreground and background colors
-        section_format.color = terminal_color_to_egui(&default_foreground_color, &tag.foreground_color);
-        section_format.background = terminal_color_to_egui(&default_background_color, &tag.background_color);
+        section_format.color =
+            terminal_color_to_egui(&default_foreground_color, &tag.foreground_color);
+        section_format.background =
+            terminal_color_to_egui(&default_background_color, &tag.background_color);
         // print both colors for debugging
-
 
         job.sections.push(egui::text::LayoutSection {
             leading_space: 0.0f32,
@@ -506,7 +507,6 @@ fn add_terminal_data_to_ui(
 
     ui.label(job)
 }
-
 
 struct TerminauxGui {
     terminal_emulator: TerminalEmulator,
@@ -524,7 +524,7 @@ impl TerminauxGui {
         let current_time = ctx.input(|i| i.time);
         let blink_interval = match self.terminal_emulator.cursor_state.blink_mode {
             BlinkMode::NoBlink => return,
-            BlinkMode::SlowBlink => 0.5,  // 1 Hz
+            BlinkMode::SlowBlink => 0.5,   // 1 Hz
             BlinkMode::RapidBlink => 0.25, // 2 Hz
         };
 
@@ -557,7 +557,6 @@ impl TerminauxGui {
             blink_state: false,
             last_blink_toggle: None,
             debug_renderer: DebugRenderer::new(),
-
         }
     }
 }
@@ -571,7 +570,7 @@ impl eframe::App for TerminauxGui {
 
         self.terminal_emulator.read();
 
-        let blink_state = self.blink_state;  // Capture current blink state
+        let blink_state = self.blink_state; // Capture current blink state
 
         let panel_response = CentralPanel::default().show(ctx, |ui| {
             let frame_response = egui::Frame::none().show(ui, |ui| {
@@ -593,12 +592,13 @@ impl eframe::App for TerminauxGui {
                     ui,
                     &self.terminal_emulator,
                     self.font_size,
-                    blink_state
+                    blink_state,
                 );
 
                 self.debug_renderer
                     .render(ui, output_response.canvas_area, Color32::BLUE);
-                self.debug_renderer.render(ui, output_response.scrollback_area, Color32::YELLOW);
+                self.debug_renderer
+                    .render(ui, output_response.scrollback_area, Color32::YELLOW);
 
                 paint_cursor(
                     output_response.canvas_area,
@@ -619,9 +619,7 @@ impl eframe::App for TerminauxGui {
             ui.checkbox(&mut self.debug_renderer.enable, "Debug render");
         });
     }
-
 }
-
 
 pub fn run(terminal_emulator: TerminalEmulator) {
     let native_options = eframe::NativeOptions::default();
@@ -630,7 +628,5 @@ pub fn run(terminal_emulator: TerminalEmulator) {
         native_options,
         Box::new(move |cc| Ok(Box::new(TerminauxGui::new(cc, terminal_emulator)))),
     )
-        .unwrap();
+    .unwrap();
 }
-
-

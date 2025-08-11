@@ -1,4 +1,3 @@
-
 use super::Mode;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SelectGraphicRendition {
@@ -6,16 +5,16 @@ pub enum SelectGraphicRendition {
     Reset,
     Bold,
     BlinkSlow,
-    Faint,          // 2
-    Italic,         // 3
-    Underline,      // 4
-    BlinkRapid,     // 6
-    Reverse,        // 7
-    Conceal,        // 8
-    Reveal,         // 28 (companion to 8)
-    NotItalic,      // 23
-    NotUnderline,   // 24
-    NormalIntensity,// 22
+    Faint,           // 2
+    Italic,          // 3
+    Underline,       // 4
+    BlinkRapid,      // 6
+    Reverse,         // 7
+    Conceal,         // 8
+    Reveal,          // 28 (companion to 8)
+    NotItalic,       // 23
+    NotUnderline,    // 24
+    NormalIntensity, // 22
     ForegroundDefault,
     ForegroundBlack,
     ForegroundRed,
@@ -50,8 +49,8 @@ pub enum SelectGraphicRendition {
     BackgroundBrightMagenta,
     BackgroundBrightCyan,
     BackgroundBrightWhite,
-    Foreground8Bit(u8),       // \x1b[38;5;<n>m
-    Background8Bit(u8),       // \x1b[48;5;<n>m
+    Foreground8Bit(u8),              // \x1b[38;5;<n>m
+    Background8Bit(u8),              // \x1b[48;5;<n>m
     ForegroundTrueColor(u8, u8, u8), // \x1b[38;2;<r>;<g>;<b>m
     BackgroundTrueColor(u8, u8, u8), // \x1b[48;2;<r>;<g>;<b>m
     Unknown(usize),
@@ -152,12 +151,10 @@ impl SelectGraphicRendition {
             106 => SelectGraphicRendition::BackgroundBrightCyan,
             107 => SelectGraphicRendition::BackgroundBrightWhite,
 
-
             _ => SelectGraphicRendition::Unknown(val),
         }
     }
 }
-
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum TerminalOutput {
@@ -198,7 +195,6 @@ enum CsiParserState {
     Invalid,
     InvalidFinished,
 }
-
 
 fn is_csi_terminator(b: u8) -> bool {
     (0x40..=0x7d).contains(&b)
@@ -250,7 +246,6 @@ impl CsiParser {
         }
     }
 
-
     fn push(&mut self, b: u8) {
         if let CsiParserState::Finished(_) | CsiParserState::InvalidFinished = &self.state {
             panic!("CsiParser should not be pushed to once finished");
@@ -265,7 +260,6 @@ impl CsiParser {
                     self.state = CsiParserState::Intermediates;
                 } else if is_csi_terminator(b) {
                     self.state = CsiParserState::Finished(b);
-
                 } else {
                     self.state = CsiParserState::Invalid
                 }
@@ -286,7 +280,6 @@ impl CsiParser {
                 if is_csi_terminator(b) {
                     self.state = CsiParserState::InvalidFinished;
                 }
-
             }
             CsiParserState::Finished(_) | CsiParserState::InvalidFinished => {
                 unreachable!();
@@ -338,7 +331,7 @@ impl AnsiParser {
                         continue;
                     }
                     // print the contents of the buffer
-                   // println!("Data: {:?}", data_output);
+                    // println!("Data: {:?}", data_output);
                     // Explicitly check for Backspace (0x08) and DEL (0x7f)
                     if *b == 0x08 || *b == 0x7f {
                         push_data_if_non_empty(&mut data_output, &mut output);
@@ -486,7 +479,7 @@ impl AnsiParser {
 
                             let ret = match param.unwrap_or(0) {
                                 0 => TerminalOutput::ClearForwards,
-                             //   1 => TerminalOutput::ClearBackwards,
+                                //   1 => TerminalOutput::ClearBackwards,
                                 2 | 3 => TerminalOutput::ClearAll,
                                 _ => TerminalOutput::Invalid,
                             };
@@ -515,14 +508,15 @@ impl AnsiParser {
                             self.inner = AnsiParserInner::Empty;
                         }
                         CsiParserState::Finished(b'm') => {
-                            let params = match split_params_into_semicolon_delimited_usize(&parser.params) {
-                                Ok(p) => p,
-                                Err(_) => {
-                                    output.push(TerminalOutput::Invalid);
-                                    self.inner = AnsiParserInner::Empty;
-                                    continue;
-                                }
-                            };
+                            let params =
+                                match split_params_into_semicolon_delimited_usize(&parser.params) {
+                                    Ok(p) => p,
+                                    Err(_) => {
+                                        output.push(TerminalOutput::Invalid);
+                                        self.inner = AnsiParserInner::Empty;
+                                        continue;
+                                    }
+                                };
 
                             let mut i = 0;
                             while i < params.len() {
@@ -554,7 +548,9 @@ impl AnsiParser {
                                                         let g = params[i + 3].unwrap_or(0) as u8;
                                                         let b = params[i + 4].unwrap_or(0) as u8;
                                                         i += 4;
-                                                        SelectGraphicRendition::ForegroundTrueColor(r, g, b)
+                                                        SelectGraphicRendition::ForegroundTrueColor(
+                                                            r, g, b,
+                                                        )
                                                     } else {
                                                         SelectGraphicRendition::Unknown(code)
                                                     }
@@ -576,7 +572,9 @@ impl AnsiParser {
                                                         let g = params[i + 3].unwrap_or(0) as u8;
                                                         let b = params[i + 4].unwrap_or(0) as u8;
                                                         i += 4;
-                                                        SelectGraphicRendition::BackgroundTrueColor(r, g, b)
+                                                        SelectGraphicRendition::BackgroundTrueColor(
+                                                            r, g, b,
+                                                        )
                                                     } else {
                                                         SelectGraphicRendition::Unknown(code)
                                                     }
@@ -595,7 +593,6 @@ impl AnsiParser {
                             }
                             self.inner = AnsiParserInner::Empty;
                         }
-
 
                         CsiParserState::Finished(b'h') => {
                             // Handle Set Mode
@@ -651,7 +648,7 @@ impl AnsiParser {
                         }
                         CsiParserState::Finished(esc) => {
                             warn!(
-        "Unhandled csi code: {:?} {esc:x} {}/{}",
+                                "Unhandled csi code: {:?} {esc:x} {}/{}",
                                 std::char::from_u32(esc as u32),
                                 esc >> 4,
                                 esc & 0xf,
@@ -758,8 +755,6 @@ mod test {
         assert_eq!(parsed.len(), 1);
         assert!(matches!(parsed[0], TerminalOutput::ClearForwards,));
 
-
-
         let mut output_buffer = AnsiParser::new();
         let parsed = output_buffer.push(b"\x1b[2J");
         assert_eq!(parsed.len(), 1);
@@ -852,7 +847,6 @@ mod test {
             test_input.push('a');
         }
 
-
         let output = output_buffer.push(test_input.as_bytes());
         assert_eq!(
             output,
@@ -921,7 +915,6 @@ mod test {
                 TerminalOutput::Data(b"a".into()),
                 TerminalOutput::Sgr(SelectGraphicRendition::BackgroundBrightWhite),
                 TerminalOutput::Data(b"a".into()),
-
             ]
         );
     }
@@ -932,15 +925,15 @@ mod test {
         // Test foreground true color
         let parsed = output_buffer.push(b"\x1b[38;2;255;128;0m");
         assert!(matches!(
-        parsed[0],
-        TerminalOutput::Sgr(SelectGraphicRendition::ForegroundTrueColor(255, 128, 0))
-    ));
+            parsed[0],
+            TerminalOutput::Sgr(SelectGraphicRendition::ForegroundTrueColor(255, 128, 0))
+        ));
 
         // Test background true color
         let parsed = output_buffer.push(b"\x1b[48;2;0;255;128m");
         assert!(matches!(
-        parsed[0],
-        TerminalOutput::Sgr(SelectGraphicRendition::BackgroundTrueColor(0, 255, 128))
-    ));
+            parsed[0],
+            TerminalOutput::Sgr(SelectGraphicRendition::BackgroundTrueColor(0, 255, 128))
+        ));
     }
 }

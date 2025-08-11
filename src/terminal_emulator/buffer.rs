@@ -1,5 +1,5 @@
-use std::ops::Range;
 use crate::terminal_emulator::CursorPos;
+use std::ops::Range;
 
 pub struct TerminalBufferSetWinSizeResponse {
     pub changed: bool,
@@ -57,8 +57,6 @@ pub struct TerminalBufferInsertLineResponse {
     pub inserted_range: Range<usize>,
 }
 
-
-
 #[derive(Debug, Eq, PartialEq)]
 struct InvalidBufPos {
     buf_pos: usize,
@@ -103,7 +101,6 @@ fn line_ranges_to_visible_line_ranges(
     let first_visible_line = num_lines.saturating_sub(height);
     &line_ranges[first_visible_line..]
 }
-
 
 fn unwrapped_line_end_pos(buf: &[u8], start_pos: usize) -> usize {
     buf.iter()
@@ -190,7 +187,6 @@ fn cursor_to_buf_pos_from_visible_line_ranges(
     cursor_pos: &CursorPos,
     visible_line_ranges: &[Range<usize>],
 ) -> Option<(usize, Range<usize>)> {
-
     visible_line_ranges.get(cursor_pos.y).and_then(|range| {
         let candidate_pos = range.start + cursor_pos.x;
         if candidate_pos > range.end {
@@ -212,8 +208,6 @@ fn cursor_to_buf_pos(
     cursor_to_buf_pos_from_visible_line_ranges(cursor_pos, visible_line_ranges)
 }
 
-
-
 pub(crate) struct TerminalBufferInsertResponse {
     /// Range of written data after insertion of padding
     pub written_range: Range<usize>,
@@ -232,14 +226,14 @@ pub(crate) struct TerminalBuffer {
 }
 
 impl TerminalBuffer {
-        pub fn new(width: usize, height: usize) -> TerminalBuffer {
-            TerminalBuffer {
-                buf: vec![],
-                width,
-                height,
-                auto_wrap: true,
-            }
+    pub fn new(width: usize, height: usize) -> TerminalBuffer {
+        TerminalBuffer {
+            buf: vec![],
+            width,
+            height,
+            auto_wrap: true,
         }
+    }
     pub(crate) fn set_auto_wrap(&mut self, enabled: bool) {
         self.auto_wrap = enabled;
     }
@@ -337,7 +331,7 @@ impl TerminalBuffer {
         // can just look up where the cursor is supposed to be and map it back to it's new cursor
         // position
         let pad_response =
-            pad_buffer_for_write(&mut self.buf, self.width, cursor_pos,self.height, 0);
+            pad_buffer_for_write(&mut self.buf, self.width, cursor_pos, self.height, 0);
         let buf_pos = pad_response.write_idx;
         let inserted_padding = pad_response.inserted_padding;
         let new_cursor_pos = buf_to_cursor_pos(&self.buf, width, height, buf_pos)
@@ -352,7 +346,11 @@ impl TerminalBuffer {
         }
     }
 
-    pub(crate) fn insert_data(&mut self, cursor_pos: &CursorPos, data: &[u8]) -> TerminalBufferInsertResponse {
+    pub(crate) fn insert_data(
+        &mut self,
+        cursor_pos: &CursorPos,
+        data: &[u8],
+    ) -> TerminalBufferInsertResponse {
         let PadBufferForWriteResponse {
             write_idx,
             inserted_padding,
@@ -361,7 +359,6 @@ impl TerminalBuffer {
             self.width,
             cursor_pos,
             self.height,
-
             data.len(),
         );
 
@@ -371,10 +368,9 @@ impl TerminalBuffer {
             let line_ranges = calc_line_ranges(&self.buf, self.width);
             let visible_line_ranges = line_ranges_to_visible_line_ranges(&line_ranges, self.height);
 
-            if let Some((_, line_range)) = cursor_to_buf_pos_from_visible_line_ranges(
-                cursor_pos,
-                visible_line_ranges
-            ) {
+            if let Some((_, line_range)) =
+                cursor_to_buf_pos_from_visible_line_ranges(cursor_pos, visible_line_ranges)
+            {
                 let line_end = line_range.end;
                 let desired_end = write_idx + data.len();
 
@@ -393,7 +389,8 @@ impl TerminalBuffer {
             }
         }
         self.buf[write_range.clone()].copy_from_slice(data);
-        let new_cursor_pos = buf_to_cursor_pos(&self.buf, self.width, self.height, write_range.end).expect("buf pos should exist in buffer");;
+        let new_cursor_pos = buf_to_cursor_pos(&self.buf, self.width, self.height, write_range.end)
+            .expect("buf pos should exist in buffer");
 
         TerminalBufferInsertResponse {
             written_range: write_range,
@@ -529,7 +526,6 @@ impl TerminalBuffer {
             visible: &self.buf[start..],
         }
     }
-
 }
 #[cfg(test)]
 mod test {
@@ -539,10 +535,6 @@ mod test {
         let line_starts = calc_line_ranges(b"asdf\n0123456789\n012345678901", 10);
         assert_eq!(line_starts, &[0..4, 5..15, 16..26, 26..28]);
     }
-
-
-
-    
 
     #[test]
     fn test_canvas_clear_forwards() {
@@ -608,8 +600,6 @@ mod test {
             b"\n\n   hello world\n\n\n    hello world\n"
         );
     }
-
-
 
     #[test]
     fn test_canvas_scrolling() {

@@ -1,5 +1,5 @@
-use std::ops::Range;
 use super::{BlinkMode, CursorState, TerminalColor};
+use std::ops::Range;
 
 pub struct ColorRangeAdjustment {
     // If a range adjustment results in a 0 width element we need to delete it
