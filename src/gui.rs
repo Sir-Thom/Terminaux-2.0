@@ -94,16 +94,13 @@ fn render_terminal_output(
     ui: &mut egui::Ui,
     terminal_emulator: &TerminalEmulator,
     font_size: f32,
-
-
+    blink_state: bool,  // Add blink_state parameter
 ) -> TerminalOutputRenderResponse {
     let terminal_data = terminal_emulator.data();
     let mut scrollback_data = terminal_data.scrollback;
     let mut canvas_data = terminal_data.visible;
     let mut format_data = terminal_emulator.format_data();
 
-    // Arguably incorrect. Scrollback does end with a newline, and that newline causes a blank
-    // space between widgets. Should we strip it here, or in the terminal emulator output?
     if scrollback_data.ends_with(b"\n") {
         scrollback_data = &scrollback_data[0..scrollback_data.len() - 1];
         if let Some(last_tag) = format_data.scrollback.last_mut() {
@@ -119,11 +116,23 @@ fn render_terminal_output(
         .auto_shrink([false, false])
         .stick_to_bottom(true)
         .show(ui, |ui| {
-            let scrollback_area =
-                add_terminal_data_to_ui(ui, scrollback_data, &format_data.scrollback, font_size)
-                    .rect;
-            let canvas_area =
-                add_terminal_data_to_ui(ui, canvas_data, &format_data.visible, font_size).rect;
+            // Pass blink_state to add_terminal_data_to_ui
+            let scrollback_area = add_terminal_data_to_ui(
+                ui,
+                scrollback_data,
+                &format_data.scrollback,
+                font_size,
+                blink_state
+            ).rect;
+
+            let canvas_area = add_terminal_data_to_ui(
+                ui,
+                canvas_data,
+                &format_data.visible,
+                font_size,
+                blink_state
+            ).rect;
+
             TerminalOutputRenderResponse {
                 scrollback_area,
                 canvas_area,
@@ -158,8 +167,10 @@ fn create_terminal_output_layout_job(
     data: &[u8],
 ) -> (LayoutJob, TextFormat) {
     let text_style = &style.text_styles[&TextStyle::Monospace];
+    let text = String::from_utf8_lossy(data).to_string();
+
     let mut job = egui::text::LayoutJob::simple(
-        std::str::from_utf8(data).unwrap().to_string(),
+        text,
         text_style.clone(),
         style.visuals.text_color(),
         width,
@@ -438,6 +449,7 @@ ui: &mut Ui,
 data: &[u8],
 format_data: &[FormatTag],
 font_size: f32,
+blink_state: bool,
 ) -> egui::Response {
     let (mut job, mut textformat) =
         create_terminal_output_layout_job(ui.style(), ui.available_width(), data);
@@ -445,12 +457,17 @@ font_size: f32,
     let default_color = textformat.color;
     let terminal_fonts = TerminalFonts::new();
 
-    for tag in format_data {
+
+
+        for tag in format_data {
         let mut range = tag.start..tag.end;
         let color = tag.color;
+            if tag.blink && !blink_state {
+                continue;
+            }
 
         if range.end == usize::MAX {
-            range.end =  data.len();
+            range.end = data.len();
         }
 
         match range.start.cmp(&data.len()) {
@@ -464,14 +481,43 @@ font_size: f32,
             _ => (),
         }
 
-        textformat.font_id.family = terminal_fonts.get_family(tag.bold,tag.italic);
+        textformat.font_id.family = terminal_fonts.get_family(tag.bold, tag.italic);
         textformat.font_id.size = font_size;
+        // apply color transform
         textformat.color = terminal_color_to_egui(&default_color, &color);
+
+        match &color {
+            TerminalColor::BackgroundBlack |
+            TerminalColor::BackgroundRed |
+            TerminalColor::BackgroundGreen |
+            TerminalColor::BackgroundYellow |
+            TerminalColor::BackgroundBlue |
+            TerminalColor::BackgroundMagenta |
+            TerminalColor::BackgroundCyan |
+            TerminalColor::BackgroundWhite |
+            TerminalColor::BackgroundBrightRed |
+            TerminalColor::BackgroundBrightGreen |
+            TerminalColor::BackgroundBrightYellow |
+            TerminalColor::BackgroundBrightBlue |
+            TerminalColor::BackgroundBrightMagenta |
+            TerminalColor::BackgroundBrightCyan |
+            TerminalColor::BackgroundBrightWhite |
+            TerminalColor::BackgroundTrueColor(_, _, _) => {
+                textformat.background = terminal_color_to_egui(&Color32::TRANSPARENT, &color);
+            }
+            _ => {
+                textformat.background = Color32::TRANSPARENT;
+            }
+        }
+
+
+
 
         job.sections.push(egui::text::LayoutSection {
             leading_space: 0.0f32,
             byte_range: range,
             format: textformat.clone(),
+
         });
     }
 
@@ -536,11 +582,12 @@ impl eframe::App for TerminauxGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let character_size = get_char_size(ctx, self.font_size);
 
-
-
-
+        // Update blink state
+        self.update_blink_state(ctx);
 
         self.terminal_emulator.read();
+
+        let blink_state = self.blink_state;  // Capture current blink state
 
         let panel_response = CentralPanel::default().show(ctx, |ui| {
             let frame_response = egui::Frame::none().show(ui, |ui| {
@@ -557,19 +604,22 @@ impl eframe::App for TerminauxGui {
                     write_input_to_terminal(input_state, &mut self.terminal_emulator);
                 });
 
-                let output_response = render_terminal_output(ui, &self.terminal_emulator, self.font_size);
-
+                // Pass blink_state to render_terminal_output
+                let output_response = render_terminal_output(
+                    ui,
+                    &self.terminal_emulator,
+                    self.font_size,
+                    blink_state
+                );
 
                 self.debug_renderer
                     .render(ui, output_response.canvas_area, Color32::BLUE);
                 self.debug_renderer.render(ui, output_response.scrollback_area, Color32::YELLOW);
 
-
                 paint_cursor(
                     output_response.canvas_area,
                     &character_size,
                     &self.terminal_emulator.cursor_pos(),
-                  //  self.terminal_emulator.data(),
                     ui,
                 );
             });
@@ -585,6 +635,7 @@ impl eframe::App for TerminauxGui {
             ui.checkbox(&mut self.debug_renderer.enable, "Debug render");
         });
     }
+
 }
 
 
@@ -597,4 +648,5 @@ pub fn run(terminal_emulator: TerminalEmulator) {
     )
         .unwrap();
 }
+
 

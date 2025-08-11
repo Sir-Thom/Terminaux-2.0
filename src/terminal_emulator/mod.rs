@@ -16,13 +16,20 @@ enum Mode {
     // Cursor keys mode
     // https://vt100.net/docs/vt100-ug/chapter3.html
     Decckm,
+    // DEC Auto Wrap Mode
+    Decawm,
+    // DEC Text Cursor Enable Mode
+    Dectcem,
     Unknown(Vec<u8>),
 }
 
 impl fmt::Debug for Mode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+
             Mode::Decckm => f.write_str("Decckm"),
+            Mode::Decawm => f.write_str("Decawm"),
+            Mode::Dectcem => f.write_str("Dectcem"),
             Mode::Unknown(params) => {
                 let params_s = std::str::from_utf8(params)
                     .expect("parameter parsing should not allow non-utf8 characters here");
@@ -31,6 +38,8 @@ impl fmt::Debug for Mode {
         }
     }
 }
+
+
 
 fn char_to_ctrl_code(c: u8) -> u8 {
     // https://catern.com/posts/terminal_quirks.html
@@ -700,6 +709,14 @@ impl TerminalEmulator {
                                 self.cursor_state.pos.y = y - 1;
                             }
                         }
+                        TerminalOutput::InsertLines(num_lines) => {
+                            let response = self
+                                .buf
+                                .insert_lines(&self.cursor_state.pos, num_lines);
+                            self.format_tracker.delete_range(response.deleted_range);
+                            self.format_tracker
+                                .push_range_adjustment(response.inserted_range);
+                        }
                         TerminalOutput::ClearForwards => {
                             if let Some(buf_pos) =
                                 self.buf.clear_forwards(&self.cursor_state.pos)
@@ -708,7 +725,29 @@ impl TerminalEmulator {
                                     .push_range(&self.cursor_state, buf_pos..usize::MAX);
                             }
                         }
-                        
+                        TerminalOutput::SetCursorPosRel { x, y } => {
+                            if let Some(x) = x {
+                                let x: i64 = x.into();
+                                let current_x: i64 = self
+                                    .cursor_state
+                                    .pos
+                                    .x
+                                    .try_into()
+                                    .expect("x position larger than i64 can handle");
+                                self.cursor_state.pos.x = (current_x + x).max(0) as usize;
+                            }
+                            if let Some(y) = y {
+                                let y: i64 = y.into();
+                                let current_y: i64 = self
+                                    .cursor_state
+                                    .pos
+                                    .y
+                                    .try_into()
+                                    .expect("y position larger than i64 can handle");
+                                self.cursor_state.pos.y = (current_y + y).max(0) as usize;
+                            }
+                        }
+
                         TerminalOutput::CarriageReturn => {
                             self.cursor_state.pos.x = 0;
                         }
@@ -764,7 +803,7 @@ impl TerminalEmulator {
                                 self.cursor_state.italic = true;
                             } else if sgr == SelectGraphicRendition::BlinkSlow {
                                 self.cursor_state.blink_mode = BlinkMode::SlowBlink;
-                                
+
                             } else if sgr == SelectGraphicRendition::BlinkRapid {
                                 self.cursor_state.blink_mode = BlinkMode::RapidBlink;
                             } else {
@@ -775,6 +814,12 @@ impl TerminalEmulator {
                             Mode::Decckm => {
                                 self.decckm_mode = true;
                             }
+                            Mode::Dectcem => {
+                                self.cursor_state.visible = true;
+                            }
+                            Mode::Decawm => {
+                                self.buf.set_auto_wrap(true);
+                            }
                             _ => {
                                 warn!("unhandled set mode: {mode:?}");
                             }
@@ -783,8 +828,14 @@ impl TerminalEmulator {
                             Mode::Decckm => {
                                 self.decckm_mode = false;
                             }
+                            Mode::Dectcem => {
+                                self.cursor_state.visible = false;
+                            }
+                            Mode::Decawm => {
+                                self.buf.set_auto_wrap(false);
+                            }
                             _ => {
-                                warn!("unhandled set mode: {mode:?}");
+                                warn!("unhandled reset mode: {mode:?}");
                             }
                         },
                         TerminalOutput::Invalid => {}
@@ -1050,7 +1101,7 @@ mod test {
         assert!(!ranges_overlap(5..10, 0..5));
     }
 
-    
+
 
     #[test]
     fn test_format_tracker_scrollback_split() {

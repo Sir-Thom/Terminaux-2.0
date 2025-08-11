@@ -49,6 +49,16 @@ fn calc_line_ranges(buf: &[u8], width: usize) -> Vec<Range<usize>> {
     ret
 }
 
+#[derive(Debug)]
+pub struct TerminalBufferInsertLineResponse {
+    /// Range of deleted data **before insertion**
+    pub deleted_range: Range<usize>,
+    /// Range of inserted data
+    pub inserted_range: Range<usize>,
+}
+
+
+
 #[derive(Debug, Eq, PartialEq)]
 struct InvalidBufPos {
     buf_pos: usize,
@@ -218,6 +228,7 @@ pub(crate) struct TerminalBuffer {
     pub(crate) buf: Vec<u8>,
     width: usize,
     height: usize,
+    auto_wrap: bool,
 }
 
 impl TerminalBuffer {
@@ -226,8 +237,12 @@ impl TerminalBuffer {
                 buf: vec![],
                 width,
                 height,
+                auto_wrap: true,
             }
         }
+    pub(crate) fn set_auto_wrap(&mut self, enabled: bool) {
+        self.auto_wrap = enabled;
+    }
 
     pub(crate) fn delete_forwards(
         &mut self,
@@ -250,6 +265,58 @@ impl TerminalBuffer {
 
         self.buf.drain(delete_range.clone());
         Some(delete_range)
+    }
+    pub fn insert_lines(
+        &mut self,
+        cursor_pos: &CursorPos,
+        mut num_lines: usize,
+    ) -> TerminalBufferInsertLineResponse {
+        let line_ranges = calc_line_ranges(&self.buf, self.width);
+        let visible_line_ranges = line_ranges_to_visible_line_ranges(&line_ranges, self.height);
+
+        // NOTE: Cursor x position is not used. If the cursor position was too far to the right,
+        // there may be no buffer position associated with it. Use Y only
+        let Some(line_range) = visible_line_ranges.get(cursor_pos.y) else {
+            return TerminalBufferInsertLineResponse {
+                deleted_range: 0..0,
+                inserted_range: 0..0,
+            };
+        };
+
+        let available_space = self.height - visible_line_ranges.len();
+        // If height is 10, and y is 5, we can only insert 5 lines. If we inserted more it would
+        // adjust the visible line range, and that would be a problem
+        num_lines = num_lines.min(self.height - cursor_pos.y);
+
+        let deletion_range = if num_lines > available_space {
+            let num_lines_removed = num_lines - available_space;
+            let removal_start_idx =
+                visible_line_ranges[visible_line_ranges.len() - num_lines_removed].start;
+            let deletion_range = removal_start_idx..self.buf.len();
+            self.buf.truncate(removal_start_idx);
+            deletion_range
+        } else {
+            0..0
+        };
+
+        let insertion_pos = line_range.start;
+
+        // Edge case, if the previous line ended in a line wrap, inserting a new line will not
+        // result in an extra line being shown on screen. E.g. with a width of 5, 01234 and 01234\n
+        // both look like a line of length 5. In this case we need to add another newline
+        if insertion_pos > 0 && self.buf[insertion_pos - 1] != b'\n' {
+            num_lines += 1;
+        }
+
+        self.buf.splice(
+            insertion_pos..insertion_pos,
+            std::iter::repeat(b'\n').take(num_lines),
+        );
+
+        TerminalBufferInsertLineResponse {
+            deleted_range: deletion_range,
+            inserted_range: insertion_pos..insertion_pos + num_lines,
+        }
     }
     pub fn set_win_size(
         &mut self,
@@ -297,9 +364,37 @@ impl TerminalBuffer {
 
             data.len(),
         );
-        let write_range = write_idx..write_idx + data.len();
+
+        let mut write_range = write_idx..write_idx + data.len();
+        if self.auto_wrap {
+            // Find the current line range
+            let line_ranges = calc_line_ranges(&self.buf, self.width);
+            let visible_line_ranges = line_ranges_to_visible_line_ranges(&line_ranges, self.height);
+
+            if let Some((_, line_range)) = cursor_to_buf_pos_from_visible_line_ranges(
+                cursor_pos,
+                visible_line_ranges
+            ) {
+                let line_end = line_range.end;
+                let desired_end = write_idx + data.len();
+
+                // Check if we need to wrap
+                if desired_end > line_end {
+                    // Calculate how much we need to wrap
+                    let wrap_amount = desired_end - line_end;
+
+                    // Insert newline to wrap
+                    self.buf.insert(line_end, b'\n');
+
+                    // Adjust write position for the newline
+                    write_range.start += 1;
+                    write_range.end += 1;
+                }
+            }
+        }
         self.buf[write_range.clone()].copy_from_slice(data);
         let new_cursor_pos = buf_to_cursor_pos(&self.buf, self.width, self.height, write_range.end).expect("buf pos should exist in buffer");;
+
         TerminalBufferInsertResponse {
             written_range: write_range,
             insertion_range: inserted_padding,
