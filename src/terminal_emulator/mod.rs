@@ -3,9 +3,12 @@ use std::{ffi::CStr, fmt, ops::Range, os::fd::{AsRawFd, OwnedFd}};
 use std::os::fd::FromRawFd;
 use ansi::{AnsiParser, SelectGraphicRendition, TerminalOutput};
 use buffer::TerminalBuffer;
+use format_tracker::{ColorRangeAdjustment};
+use crate::terminal_emulator::format_tracker::{FormatTag, FormatTracker};
+
 mod ansi;
 mod buffer;
-mod format_tracker;
+pub(crate) mod format_tracker;
 
 pub const TERMINAL_WIDTH: u16 = 80;
 pub const TERMINAL_HEIGHT: u16 = 24;
@@ -192,125 +195,8 @@ fn insert_data_at_position(data: &[u8], pos: usize, buf: &mut Vec<u8>) {
     buf.extend_from_slice(data_to_push);
 }
 
-fn delete_items_from_vec<T>(mut to_delete: Vec<usize>, vec: &mut Vec<T>) {
-    to_delete.sort();
-    for idx in to_delete.iter().rev() {
-        vec.remove(*idx);
-    }
-}
 
-struct ColorRangeAdjustment {
-    // If a range adjustment results in a 0 width element we need to delete it
-    should_delete: bool,
-    // If a range was split we need to insert a new one
-    to_insert: Option<FormatTag>,
-}
 
-/// if a and b overlap like
-/// a:  [         ]
-/// b:      [  ]
-fn range_fully_conatins(a: &Range<usize>, b: &Range<usize>) -> bool {
-    a.start <= b.start && a.end >= b.end
-}
-
-/// if a and b overlap like
-/// a:     [      ]
-/// b:  [     ]
-fn range_starts_overlapping(a: &Range<usize>, b: &Range<usize>) -> bool {
-    a.start > b.start && a.end > b.end
-}
-
-/// if a and b overlap like
-/// a: [      ]
-/// b:    [      ]
-fn range_ends_overlapping(a: &Range<usize>, b: &Range<usize>) -> bool {
-    range_starts_overlapping(b, a)
-}
-
-fn adjust_existing_format_range(
-    existing_elem: &mut FormatTag,
-    range: &Range<usize>,
-) -> ColorRangeAdjustment {
-    let mut ret = ColorRangeAdjustment {
-        should_delete: false,
-        to_insert: None,
-    };
-
-    let existing_range = existing_elem.start..existing_elem.end;
-    if range_fully_conatins(range, &existing_range) {
-        ret.should_delete = true;
-    } else if range_fully_conatins(&existing_range, range) {
-        if existing_elem.start == range.start {
-            ret.should_delete = true;
-        }
-
-        if range.end != existing_elem.end {
-            ret.to_insert = Some(FormatTag {
-                start: range.end,
-                end: existing_elem.end,
-                color: existing_elem.color,
-                bold: existing_elem.bold,
-                italic: existing_elem.italic,
-                blink:existing_elem.blink,
-            });
-        }
-
-        existing_elem.end = range.start;
-    } else if range_starts_overlapping(range, &existing_range) {
-        existing_elem.end = range.start;
-        if existing_elem.start == existing_elem.end {
-            ret.should_delete = true;
-        }
-    } else if range_ends_overlapping(range, &existing_range) {
-        existing_elem.start = range.end;
-        if existing_elem.start == existing_elem.end {
-            ret.should_delete = true;
-        }
-    } else {
-        panic!(
-            "Unhandled case {}-{}, {}-{}",
-            existing_elem.start, existing_elem.end, range.start, range.end
-        );
-    }
-
-    ret
-}
-
-fn adjust_existing_format_ranges(existing: &mut Vec<FormatTag>, range: &Range<usize>) {
-    let mut effected_infos = existing
-        .iter_mut()
-        .enumerate()
-        .filter(|(_i, item)| ranges_overlap(item.start..item.end, range.clone()))
-        .collect::<Vec<_>>();
-
-    let mut to_delete = Vec::new();
-    let mut to_push = Vec::new();
-    for info in &mut effected_infos {
-        let adjustment = adjust_existing_format_range(info.1, range);
-        if adjustment.should_delete {
-            to_delete.push(info.0);
-        }
-        if let Some(item) = adjustment.to_insert {
-            to_push.push(item);
-        }
-    }
-
-    delete_items_from_vec(to_delete, existing);
-    existing.extend(to_push);
-}
-pub fn buffer_index_to_cursor_pos(buf: &[u8], index: usize) -> (usize, usize) {
-    let mut y = 0;
-    let mut current = 0;
-    for line in buf.split(|&b| b == b'\n') {
-        let line_len = line.len();
-        if current + line_len >= index {
-            return (index - current, y);
-        }
-        current += line_len + 1; // +1 for the newline character
-        y += 1;
-    }
-    (0, y)
-}
 
 fn split_format_data_for_scrollback(
     tags: Vec<FormatTag>,
@@ -363,8 +249,23 @@ pub struct CursorState {
     pub(crate) visible: bool,
     pub(crate) bold: bool,
     pub(crate) italic: bool,
-    pub(crate) color: TerminalColor,
+    pub foreground_color: TerminalColor,
+    pub background_color: TerminalColor,
 
+}
+impl Default for CursorState {
+    fn default() -> Self {
+        CursorState {
+            pos: CursorPos { x: 0, y: 0 },
+            foreground_color: TerminalColor::Default,
+            background_color: TerminalColor::Default,
+            bold: false,
+            italic: false,
+            blink_mode: BlinkMode::NoBlink,
+
+            visible: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -416,6 +317,7 @@ pub enum TerminalColor {
     BackgroundBrightWhite,
     BackgroundTrueColor(u8, u8, u8),
     Foreground8Bit(u8),
+    Background8Bit(u8),
 }
 
 impl TerminalColor {
@@ -458,6 +360,9 @@ impl TerminalColor {
             SelectGraphicRendition::Foreground8Bit(n) => {
                 Some(TerminalColor::Foreground8Bit(n))
             },
+            SelectGraphicRendition::Background8Bit(n) => {
+                Some(TerminalColor::Background8Bit(n))
+            },
             SelectGraphicRendition::BlinkSlow => Some(TerminalColor::BlinkSlow),
             SelectGraphicRendition::BlinkRapid => Some(TerminalColor::BlinkRapid),
             _ => None,
@@ -496,116 +401,6 @@ fn ranges_overlap(a: Range<usize>, b: Range<usize>) -> bool {
     true
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FormatTag {
-    pub start: usize,
-    pub end: usize,
-    pub blink: bool,
-    pub color: TerminalColor,
-    pub bold: bool,
-    pub italic: bool,
-}
-
-struct FormatTracker {
-    color_info: Vec<FormatTag>,
-}
-
-impl FormatTracker {
-    fn new() -> FormatTracker {
-        FormatTracker {
-            color_info: vec![FormatTag {
-                start: 0,
-                end: usize::MAX,
-                color: TerminalColor::Default,
-                bold: false,
-                italic: false,
-                blink: false,
-            }],
-        }
-    }
-    /// Move all tags > range.start to range.start + range.len
-    /// No gaps in coloring data, so one range must expand instead of just be adjusted
-    pub fn push_range_adjustment(&mut self, range: Range<usize>) {
-        let range_len = range.end - range.start;
-        for info in &mut self.color_info {
-            if info.end <= range.start {
-                continue;
-            }
-
-            if info.start > range.start {
-                info.start += range_len;
-                if info.end != usize::MAX {
-                    info.end += range_len;
-                }
-            } else if info.end != usize::MAX {
-                info.end += range_len;
-            }
-        }
-    }
-
-    fn push_range(&mut self, cursor: &CursorState, range: Range<usize>) {
-        adjust_existing_format_ranges(&mut self.color_info, &range);
-
-        self.color_info.push(FormatTag {
-            start: range.start,
-            end: range.end,
-            color: cursor.color,
-            bold: cursor.bold,
-            italic: cursor.italic,
-            blink: cursor.blink_mode != BlinkMode::NoBlink,
-        });
-
-        // FIXME: Insertion sort
-        // FIXME: Merge adjacent
-        self.color_info.sort_by(|a, b| a.start.cmp(&b.start));
-    }
-
-    fn tags(&self) -> Vec<FormatTag> {
-        self.color_info.clone()
-    }
-    fn delete_range(&mut self, range: Range<usize>) {
-        let mut to_delete = Vec::new();
-        let del_size = range.end - range.start;
-
-        for (i, info) in &mut self.color_info.iter_mut().enumerate() {
-            let info_range = info.start..info.end;
-            if info.end <= range.start {
-                continue;
-            }
-
-            if ranges_overlap(range.clone(), info_range.clone()) {
-                if range_fully_conatins(&range, &info_range) {
-                    to_delete.push(i);
-                } else if range_starts_overlapping(&range, &info_range) {
-                    if info.end != usize::MAX {
-                        info.end = range.start;
-                    }
-                } else if range_ends_overlapping(&range, &info_range) {
-                    info.start = range.start;
-                    if info.end != usize::MAX {
-                        info.end -= del_size;
-                    }
-                } else if range_fully_conatins(&info_range, &range) {
-                    if info.end != usize::MAX {
-                        info.end -= del_size;
-                    }
-                } else {
-                    panic!("Unhandled overlap");
-                }
-            } else {
-                assert!(!ranges_overlap(range.clone(), info_range.clone()));
-                info.start -= del_size;
-                if info.end != usize::MAX {
-                    info.end -= del_size;
-                }
-            }
-        }
-
-        for i in to_delete.into_iter().rev() {
-            self.color_info.remove(i);
-        }
-    }
-}
 
 
 ioctl_write_ptr_bad!(set_window_size, nix::libc::TIOCSWINSZ, nix::pty::Winsize);
@@ -642,14 +437,7 @@ impl TerminalEmulator {
             output_buf: AnsiParser::new(),
             buf: TerminalBuffer::new(TERMINAL_WIDTH as usize, TERMINAL_HEIGHT as usize),
             format_tracker: FormatTracker::new(),
-            cursor_state: CursorState {
-                pos: CursorPos { x: 0, y: 0 },
-                visible: false,
-                bold: false,
-                color: TerminalColor::Default,
-                italic: false,
-                blink_mode: BlinkMode::NoBlink,
-            },
+            cursor_state: CursorState::default(),
             decckm_mode: false,
             fd,
         }
@@ -791,23 +579,92 @@ impl TerminalEmulator {
                         }
                         TerminalOutput::Sgr(sgr) => {
                             if let Some(color) = TerminalColor::from_sgr(sgr) {
-                                self.cursor_state.color = color;
-                            } else if sgr == SelectGraphicRendition::Reset {
-                                self.cursor_state.color = TerminalColor::Default;
-                                self.cursor_state.bold = false;
-                                self.cursor_state.italic = false;
-                                self.cursor_state.blink_mode = BlinkMode::NoBlink;
-                            } else if sgr == SelectGraphicRendition::Bold {
-                                self.cursor_state.bold = true;
-                            } else if sgr == SelectGraphicRendition::Italic {
-                                self.cursor_state.italic = true;
-                            } else if sgr == SelectGraphicRendition::BlinkSlow {
-                                self.cursor_state.blink_mode = BlinkMode::SlowBlink;
+                                // Handle foreground/background colors separately
+                                match &color {
+                                    TerminalColor::ForegroundBlack
+                                    | TerminalColor::ForegroundRed
+                                    | TerminalColor::ForegroundGreen
+                                    | TerminalColor::ForegroundYellow
+                                    | TerminalColor::ForegroundBlue
+                                    | TerminalColor::ForegroundMagenta
+                                    | TerminalColor::ForegroundCyan
+                                    | TerminalColor::ForegroundWhite
+                                    | TerminalColor::ForegroundBrightBlack
+                                    | TerminalColor::ForegroundBrightRed
+                                    | TerminalColor::ForegroundBrightGreen
+                                    | TerminalColor::ForegroundBrightYellow
+                                    | TerminalColor::ForegroundBrightBlue
+                                    | TerminalColor::ForegroundBrightMagenta
+                                    | TerminalColor::ForegroundBrightCyan
+                                    | TerminalColor::ForegroundBrightWhite
+                                    | TerminalColor::ForegroundRgb(_, _, _)
+                                    | TerminalColor::Foreground8Bit(_) => {
+                                        self.cursor_state.foreground_color = color;
+                                    }
+                                    TerminalColor::BackgroundBlack
+                                    | TerminalColor::BackgroundRed
+                                    | TerminalColor::BackgroundGreen
+                                    | TerminalColor::BackgroundYellow
+                                    | TerminalColor::BackgroundBlue
+                                    | TerminalColor::BackgroundMagenta
+                                    | TerminalColor::BackgroundCyan
+                                    | TerminalColor::BackgroundWhite
+                                    | TerminalColor::BackgroundBrightBlack
+                                    | TerminalColor::BackgroundBrightRed
+                                    | TerminalColor::BackgroundBrightGreen
+                                    | TerminalColor::BackgroundBrightYellow
+                                    | TerminalColor::BackgroundBrightBlue
+                                    | TerminalColor::BackgroundBrightMagenta
+                                    | TerminalColor::BackgroundBrightCyan
+                                    | TerminalColor::BackgroundBrightWhite
+                                    | TerminalColor::BackgroundTrueColor(_, _, _)
+                                    | TerminalColor::Background8Bit(_) => {
+                                        self.cursor_state.background_color = color;
+                                    }
+                                    // Set foreground color
+                                    _ => {
+                                        self.cursor_state.foreground_color = color;
+                                    }
 
-                            } else if sgr == SelectGraphicRendition::BlinkRapid {
-                                self.cursor_state.blink_mode = BlinkMode::RapidBlink;
+                                    _ => {
+                                        // Handle other attributes
+                                        if sgr == SelectGraphicRendition::Reset {
+                                            self.cursor_state.foreground_color = self.cursor_state.foreground_color;
+                                            self.cursor_state.background_color = TerminalColor::Default;
+                                            self.cursor_state.bold = false;
+                                            self.cursor_state.italic = false;
+                                            self.cursor_state.blink_mode = BlinkMode::NoBlink;
+                                        } else if sgr == SelectGraphicRendition::Bold {
+                                            self.cursor_state.bold = true;
+                                        } else if sgr == SelectGraphicRendition::Italic {
+                                            self.cursor_state.italic = true;
+                                        } else if sgr == SelectGraphicRendition::BlinkSlow {
+                                            self.cursor_state.blink_mode = BlinkMode::SlowBlink;
+                                        } else if sgr == SelectGraphicRendition::BlinkRapid {
+                                            self.cursor_state.blink_mode = BlinkMode::RapidBlink;
+                                        }
+                                    }
+                                }
                             } else {
-                                warn!("Unhandled sgr: {:?}", sgr);
+                                // Handle cases where from_sgr returns None
+                                if sgr == SelectGraphicRendition::Reset {
+
+                                    self.cursor_state.foreground_color = TerminalColor::Default;
+                                    self.cursor_state.background_color = TerminalColor::Default;
+                                    self.cursor_state.bold = false;
+                                    self.cursor_state.italic = false;
+                                    self.cursor_state.blink_mode = BlinkMode::NoBlink;
+                                } else if sgr == SelectGraphicRendition::Bold {
+                                    self.cursor_state.bold = true;
+                                } else if sgr == SelectGraphicRendition::Italic {
+                                    self.cursor_state.italic = true;
+                                } else if sgr == SelectGraphicRendition::BlinkSlow {
+                                    self.cursor_state.blink_mode = BlinkMode::SlowBlink;
+                                } else if sgr == SelectGraphicRendition::BlinkRapid {
+                                    self.cursor_state.blink_mode = BlinkMode::RapidBlink;
+                                } else {
+                                    warn!("Unhandled sgr: {:?}", sgr);
+                                }
                             }
                         }
                         TerminalOutput::SetMode(mode) => match mode {
@@ -885,332 +742,3 @@ impl TerminalEmulator {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn basic_color_tracker_test() {
-        let mut format_tracker = FormatTracker::new();
-        let mut cursor_state = CursorState {
-            pos: CursorPos { x: 0, y: 0 },
-            blink_mode: BlinkMode::NoBlink,
-            color: TerminalColor::Default,
-            bold: false,
-            visible: false,
-            italic: false,
-        };
-
-        cursor_state.color = TerminalColor::BackgroundYellow;
-        format_tracker.push_range(&cursor_state, 3..10);
-        let tags = format_tracker.tags();
-        assert_eq!(
-            tags,
-            &[
-                FormatTag {
-                    start: 0,
-                    end: 3,
-                    blink: false,
-                    color: TerminalColor::Default,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 3,
-                    end: 10,
-                    blink: false,
-                    color: TerminalColor::BackgroundYellow,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 10,
-                    end: usize::MAX,
-                    blink: false,
-                    color: TerminalColor::Default,
-                    bold: false,
-                    italic: false,
-                },
-            ]
-        );
-
-        cursor_state.color = TerminalColor::BackgroundBlue;
-        format_tracker.push_range(&cursor_state, 5..7);
-        let tags = format_tracker.tags();
-        assert_eq!(
-            tags,
-            &[
-                FormatTag {
-                    start: 0,
-                    end: 3,
-                    blink: false,
-                    color: TerminalColor::Default,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 3,
-                    end: 5,
-                    blink: false,
-                    color: TerminalColor::BackgroundYellow,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 5,
-                    end: 7,
-                    blink: false,
-                    color: TerminalColor::BackgroundBlue,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 7,
-                    end: 10,
-                    blink: false,
-                    color: TerminalColor::BackgroundYellow,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 10,
-                    end: usize::MAX,
-                    blink: false,
-                    color: TerminalColor::Default,
-                    bold: false,
-                    italic: false,
-                },
-            ]
-        );
-
-        cursor_state.color = TerminalColor::BackgroundGreen;
-        format_tracker.push_range(&cursor_state, 7..9);
-        let tags = format_tracker.tags();
-        assert_eq!(
-            tags,
-            &[
-                FormatTag {
-                    start: 0,
-                    end: 3,
-                    blink: false,
-                    color: TerminalColor::Default,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 3,
-                    end: 5,
-                    blink: false,
-                    color: TerminalColor::BackgroundYellow,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 5,
-                    end: 7,
-                    blink: false,
-                    color: TerminalColor::BackgroundBlue,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 7,
-                    end: 9,
-                    blink: false,
-                    color: TerminalColor::BackgroundGreen,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 9,
-                    end: 10,
-                    blink: false,
-                    color: TerminalColor::BackgroundYellow,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 10,
-                    end: usize::MAX,
-                    blink: false,
-                    color: TerminalColor::Default,
-                    bold: false,
-                    italic: false,
-                },
-            ]
-        );
-
-        cursor_state.color = TerminalColor::BackgroundRed;
-        cursor_state.bold = true;
-        format_tracker.push_range(&cursor_state, 6..11);
-        let tags = format_tracker.tags();
-        assert_eq!(
-            tags,
-            &[
-                FormatTag {
-                    start: 0,
-                    end: 3,
-                    blink: false,
-                    color: TerminalColor::Default,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 3,
-                    end: 5,
-                    blink: false,
-                    color: TerminalColor::BackgroundYellow,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 5,
-                    end: 6,
-                    blink: false,
-                    color: TerminalColor::BackgroundBlue,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 6,
-                    end: 11,
-                    blink: false,
-                    color: TerminalColor::BackgroundRed,
-                    bold: true,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 11,
-                    end: usize::MAX,
-                    blink: false,
-                    color: TerminalColor::Default,
-                    bold: false,
-                    italic: false,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn test_range_overlap() {
-        assert!(ranges_overlap(5..10, 7..9));
-        assert!(ranges_overlap(5..10, 8..12));
-        assert!(ranges_overlap(5..10, 3..6));
-        assert!(ranges_overlap(5..10, 2..12));
-        assert!(!ranges_overlap(5..10, 10..12));
-        assert!(!ranges_overlap(5..10, 0..5));
-    }
-
-
-
-    #[test]
-    fn test_format_tracker_scrollback_split() {
-        let tags = vec![
-            FormatTag {
-                start: 0,
-                end: 5,
-                blink: false,
-                color: TerminalColor::BackgroundBlue,
-                bold: true,
-                italic: false,
-            },
-            FormatTag {
-                start: 5,
-                end: 7,
-                blink: false,
-                color: TerminalColor::BackgroundRed,
-                bold: false,
-                italic: false,
-            },
-            FormatTag {
-                start: 7,
-                end: 10,
-                blink: false,
-                color: TerminalColor::BackgroundBlue,
-                bold: true,
-                italic: false,
-            },
-            FormatTag {
-                start: 10,
-                end: usize::MAX,
-                blink: false,
-                color: TerminalColor::BackgroundRed,
-                bold: true,
-                italic: false,
-            },
-        ];
-
-        // Case 1: no split
-        let res = split_format_data_for_scrollback(tags.clone(), 0);
-        assert_eq!(res.scrollback, &[]);
-        assert_eq!(res.visible, &tags[..]);
-
-        // Case 2: Split on a boundary
-        let res = split_format_data_for_scrollback(tags.clone(), 10);
-        assert_eq!(res.scrollback, &tags[0..3]);
-        assert_eq!(
-            res.visible,
-            &[FormatTag {
-                start: 0,
-                end: usize::MAX,
-                blink: false,
-                color: TerminalColor::BackgroundRed,
-                bold: true,
-                italic: false,
-            },]
-        );
-
-        // Case 3: Split a segment
-        let res = split_format_data_for_scrollback(tags.clone(), 9);
-        assert_eq!(
-            res.scrollback,
-            &[
-                FormatTag {
-                    start: 0,
-                    end: 5,
-                    blink: false,
-                    color: TerminalColor::BackgroundBlue,
-                    bold: true,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 5,
-                    end: 7,
-                    blink: false,
-                    color: TerminalColor::BackgroundRed,
-                    bold: false,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 7,
-                    end: 9,
-                    blink: false,
-                    color: TerminalColor::BackgroundBlue,
-                    bold: true,
-                    italic: false,
-                },
-            ]
-        );
-        assert_eq!(
-            res.visible,
-            &[
-                FormatTag {
-                    start: 0,
-                    end: 1,
-                    blink: false,
-                    color: TerminalColor::BackgroundBlue,
-                    bold: true,
-                    italic: false,
-                },
-                FormatTag {
-                    start: 1,
-                    end: usize::MAX,
-                    blink: false,
-                    color: TerminalColor::BackgroundRed,
-                    bold: true,
-                    italic: false,
-                },
-            ]
-        );
-    }
-}

@@ -1,7 +1,8 @@
 use std::sync::Arc;
-use crate::terminal_emulator::{ cursor_to_buffer_position, BlinkMode, CursorPos, CursorState, FormatTag, TerminalColor, TerminalEmulator, TerminalInput};
+use crate::terminal_emulator::{ cursor_to_buffer_position, BlinkMode, CursorPos, CursorState, TerminalColor, TerminalEmulator, TerminalInput};
 use eframe::egui::{ self, text::LayoutJob, CentralPanel, Color32, DragValue, Event, FontData, FontDefinitions,
                     FontFamily, FontId, InputState, Key, Modifiers, Rect, TextFormat, TextStyle, Ui};
+use crate::terminal_emulator::format_tracker::{FormatTag, FormatTracker};
 use std::borrow::Cow;
 use log::info;
 
@@ -80,6 +81,10 @@ fn terminal_color_to_egui(default_color: &Color32, color: &TerminalColor) -> Col
         TerminalColor::BackgroundBrightMagenta => Color32::from_rgb(255, 0, 255),
         TerminalColor::BackgroundBrightCyan => Color32::from_rgb(0, 255, 255),
         TerminalColor::BackgroundBrightWhite => Color32::from_rgb(255, 255, 255),
+        TerminalColor::Background8Bit(n) => {
+            let (r, g, b) = index_to_rgb(*n);
+            Color32::from_rgb(r, g, b)
+        }
         _ =>  default_color.clone()
     }
 }
@@ -445,26 +450,27 @@ fn setup_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 fn add_terminal_data_to_ui(
-ui: &mut Ui,
-data: &[u8],
-format_data: &[FormatTag],
-font_size: f32,
-blink_state: bool,
+    ui: &mut Ui,
+    data: &[u8],
+    format_data: &[FormatTag],
+    font_size: f32,
+    blink_state: bool,
 ) -> egui::Response {
     let (mut job, mut textformat) =
         create_terminal_output_layout_job(ui.style(), ui.available_width(), data);
 
-    let default_color = textformat.color;
+    let default_foreground_color = textformat.color;
+    let default_background_color = Color32::TRANSPARENT;
     let terminal_fonts = TerminalFonts::new();
 
+    textformat.background = Color32::TRANSPARENT;
 
-
-        for tag in format_data {
+    for tag in format_data {
         let mut range = tag.start..tag.end;
-        let color = tag.color;
-            if tag.blink && !blink_state {
-                continue;
-            }
+
+        if tag.blink && !blink_state {
+            continue;
+        }
 
         if range.end == usize::MAX {
             range.end = data.len();
@@ -481,48 +487,26 @@ blink_state: bool,
             _ => (),
         }
 
-        textformat.font_id.family = terminal_fonts.get_family(tag.bold, tag.italic);
-        textformat.font_id.size = font_size;
-        // apply color transform
-        textformat.color = terminal_color_to_egui(&default_color, &color);
+        let mut section_format = textformat.clone();
+        section_format.font_id.family = terminal_fonts.get_family(tag.bold, tag.italic);
+        section_format.font_id.size = font_size;
 
-        match &color {
-            TerminalColor::BackgroundBlack |
-            TerminalColor::BackgroundRed |
-            TerminalColor::BackgroundGreen |
-            TerminalColor::BackgroundYellow |
-            TerminalColor::BackgroundBlue |
-            TerminalColor::BackgroundMagenta |
-            TerminalColor::BackgroundCyan |
-            TerminalColor::BackgroundWhite |
-            TerminalColor::BackgroundBrightRed |
-            TerminalColor::BackgroundBrightGreen |
-            TerminalColor::BackgroundBrightYellow |
-            TerminalColor::BackgroundBrightBlue |
-            TerminalColor::BackgroundBrightMagenta |
-            TerminalColor::BackgroundBrightCyan |
-            TerminalColor::BackgroundBrightWhite |
-            TerminalColor::BackgroundTrueColor(_, _, _) => {
-                textformat.background = terminal_color_to_egui(&Color32::TRANSPARENT, &color);
-            }
-            _ => {
-                textformat.background = Color32::TRANSPARENT;
-            }
-        }
-
-
+        // Set both foreground and background colors
+        section_format.color = terminal_color_to_egui(&default_foreground_color, &tag.foreground_color);
+        section_format.background = terminal_color_to_egui(&default_background_color, &tag.background_color);
+        // print both colors for debugging
 
 
         job.sections.push(egui::text::LayoutSection {
             leading_space: 0.0f32,
             byte_range: range,
-            format: textformat.clone(),
-
+            format: section_format,
         });
     }
 
     ui.label(job)
 }
+
 
 struct TerminauxGui {
     terminal_emulator: TerminalEmulator,

@@ -1,20 +1,19 @@
 use std::ops::Range;
 use super::{BlinkMode, CursorState, TerminalColor};
 
-
-struct ColorRangeAdjustment {
+pub struct ColorRangeAdjustment {
     // If a range adjustment results in a 0 width element we need to delete it
-    should_delete: bool,
+    pub(crate) should_delete: bool,
     // If a range was split we need to insert a new one
-    to_insert: Option<FormatTag>,
+    pub(crate) to_insert: Option<FormatTag>,
 }
+
 fn delete_items_from_vec<T>(mut to_delete: Vec<usize>, vec: &mut Vec<T>) {
     to_delete.sort();
     for idx in to_delete.iter().rev() {
         vec.remove(*idx);
     }
 }
-
 
 fn ranges_overlap(a: Range<usize>, b: Range<usize>) -> bool {
     if a.end <= b.start {
@@ -34,7 +33,6 @@ fn ranges_overlap(a: Range<usize>, b: Range<usize>) -> bool {
 fn range_fully_conatins(a: &Range<usize>, b: &Range<usize>) -> bool {
     a.start <= b.start && a.end >= b.end
 }
-
 
 /// if a and b overlap like
 /// a:     [      ]
@@ -71,10 +69,11 @@ fn adjust_existing_format_range(
             ret.to_insert = Some(FormatTag {
                 start: range.end,
                 end: existing_elem.end,
-                color: existing_elem.color,
+                foreground_color: existing_elem.foreground_color,
+                background_color: existing_elem.background_color,
                 bold: existing_elem.bold,
                 italic: existing_elem.italic,
-                blink:existing_elem.blink,
+                blink: existing_elem.blink,
             });
         }
 
@@ -121,6 +120,7 @@ fn adjust_existing_format_ranges(existing: &mut Vec<FormatTag>, range: &Range<us
     delete_items_from_vec(to_delete, existing);
     existing.extend(to_push);
 }
+
 pub fn buffer_index_to_cursor_pos(buf: &[u8], index: usize) -> (usize, usize) {
     let mut y = 0;
     let mut current = 0;
@@ -135,13 +135,13 @@ pub fn buffer_index_to_cursor_pos(buf: &[u8], index: usize) -> (usize, usize) {
     (0, y)
 }
 
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FormatTag {
     pub start: usize,
     pub end: usize,
     pub blink: bool,
-    pub color: TerminalColor,
+    pub foreground_color: TerminalColor,
+    pub background_color: TerminalColor,
     pub bold: bool,
     pub italic: bool,
 }
@@ -151,29 +151,32 @@ pub(crate) struct FormatTracker {
 }
 
 impl FormatTracker {
-    pub(crate) fn new() -> FormatTracker {
-        FormatTracker {
+    pub(crate) fn new() -> Self {
+        Self {
             color_info: vec![FormatTag {
                 start: 0,
                 end: usize::MAX,
-                color: TerminalColor::Default,
+                foreground_color: TerminalColor::Default,
+                background_color: TerminalColor::Default,
                 bold: false,
                 italic: false,
                 blink: false,
             }],
         }
-
     }
+
     pub(crate) fn reset(&mut self) {
         self.color_info = vec![FormatTag {
             start: 0,
             end: usize::MAX,
-            color: TerminalColor::Default,
+            foreground_color: TerminalColor::Default,
+            background_color: TerminalColor::Default,
             bold: false,
             italic: false,
             blink: false,
         }];
     }
+
     /// Move all tags > range.start to range.start + range.len
     /// No gaps in coloring data, so one range must expand instead of just be adjusted
     pub fn push_range_adjustment(&mut self, range: Range<usize>) {
@@ -193,14 +196,14 @@ impl FormatTracker {
             }
         }
     }
-
     pub(crate) fn push_range(&mut self, cursor: &CursorState, range: Range<usize>) {
         adjust_existing_format_ranges(&mut self.color_info, &range);
 
         self.color_info.push(FormatTag {
             start: range.start,
             end: range.end,
-            color: cursor.color,
+            foreground_color: cursor.foreground_color,
+            background_color: cursor.background_color,
             bold: cursor.bold,
             italic: cursor.italic,
             blink: cursor.blink_mode != BlinkMode::NoBlink,
@@ -214,6 +217,7 @@ impl FormatTracker {
     pub(crate) fn tags(&self) -> Vec<FormatTag> {
         self.color_info.clone()
     }
+
     pub(crate) fn delete_range(&mut self, range: Range<usize>) {
         let mut to_delete = Vec::new();
         let del_size = range.end - range.start;
@@ -256,7 +260,4 @@ impl FormatTracker {
             self.color_info.remove(i);
         }
     }
-
 }
-
-
