@@ -216,9 +216,10 @@ pub(crate) struct TerminalBufferInsertResponse {
 
 pub(crate) struct TerminalBuffer {
     pub(crate) buf: Vec<u8>,
-    width: usize,
-    height: usize,
+    pub(crate) width: usize,   // Make sure this is pub(crate)
+    pub(crate) height: usize,  // Make sure this is pub(crate)
 }
+
 
 impl TerminalBuffer {
         pub fn new(width: usize, height: usize) -> TerminalBuffer {
@@ -227,7 +228,15 @@ impl TerminalBuffer {
                 width,
                 height,
             }
+
         }
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    pub fn height(&self) -> usize {
+        self.height
+    }
 
     pub(crate) fn delete_forwards(
         &mut self,

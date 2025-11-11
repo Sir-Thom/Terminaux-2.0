@@ -612,6 +612,10 @@ pub struct TerminalEmulator {
     format_tracker: FormatTracker,
     pub(crate) cursor_state: CursorState,
     fd: OwnedFd,
+    alt_screen_active: bool,
+    main_buf: Option<TerminalBuffer>,
+    main_format_tracker: Option<FormatTracker>,
+    main_cursor_state: Option<CursorState>,
 }
 
 impl TerminalEmulator {
@@ -643,10 +647,53 @@ impl TerminalEmulator {
             },
             decckm_mode: false,
             fd,
+            alt_screen_active: false,
+            main_buf: None,
+            main_format_tracker: None,
+            main_cursor_state: None,
         }
     }
 
+    fn enter_alt_screen(&mut self) {
+        if self.alt_screen_active {
+            return;
+        }
 
+        let width = self.buf.width;
+        let height = self.buf.height;
+
+        self.main_buf = Some(std::mem::replace(
+            &mut self.buf,
+            TerminalBuffer::new(width, height)
+        ));
+        self.main_format_tracker = Some(std::mem::replace(
+            &mut self.format_tracker,
+            FormatTracker::new()
+        ));
+        self.main_cursor_state = Some(self.cursor_state.clone());
+
+        self.cursor_state.pos = CursorPos { x: 0, y: 0 };
+        self.alt_screen_active = true;
+    }
+
+    fn exit_alt_screen(&mut self) {
+        if !self.alt_screen_active {
+            return; // Not in alt screen
+        }
+
+        // Restore saved state
+        if let Some(main_buf) = self.main_buf.take() {
+            self.buf = main_buf;
+        }
+        if let Some(main_format_tracker) = self.main_format_tracker.take() {
+            self.format_tracker = main_format_tracker;
+        }
+        if let Some(main_cursor_state) = self.main_cursor_state.take() {
+            self.cursor_state = main_cursor_state;
+        }
+
+        self.alt_screen_active = false;
+    }
 
     pub fn write(&mut self, to_write: TerminalInput) {
         match to_write.to_payload(self.decckm_mode) {
@@ -680,6 +727,12 @@ impl TerminalEmulator {
                 let parsed = self.output_buf.push(incoming);
                 for segment in parsed {
                     match segment {
+                        TerminalOutput::EnterAltScreen => {
+                            self.enter_alt_screen();
+                        }
+                        TerminalOutput::ExitAltScreen => {
+                            self.exit_alt_screen();
+                        }
                         TerminalOutput::Data(data) => {
                             let response = self
                                 .buf
@@ -801,7 +854,9 @@ impl TerminalEmulator {
             }
         }
 
-
+    pub fn is_alt_screen_active(&self) -> bool {
+        self.alt_screen_active
+    }
     pub fn data(&self) -> TerminalData<&[u8]> {
         self.buf.data()
     }
@@ -838,6 +893,41 @@ impl TerminalEmulator {
 mod test {
     use super::*;
 
+    #[test]
+    fn test_alt_screen_parsing() {
+        let mut parser = AnsiParser::new();
+
+        // Test entering alt screen
+        let output = parser.push(b"\x1b[?1049h");
+        assert_eq!(output.len(), 1);
+        assert!(matches!(output[0], TerminalOutput::EnterAltScreen));
+
+        // Test exiting alt screen
+        let output = parser.push(b"\x1b[?1049l");
+        assert_eq!(output.len(), 1);
+        assert!(matches!(output[0], TerminalOutput::ExitAltScreen));
+    }
+
+    #[test]
+    fn test_alt_screen_switching() {
+        let mut emulator = TerminalEmulator::new();
+
+        // Write some data to main screen
+        emulator.read(); // Process any initial output
+        assert!(!emulator.is_alt_screen_active());
+
+        // Enter alt screen
+        emulator.enter_alt_screen();
+        assert!(emulator.is_alt_screen_active());
+
+        // Alt screen should be empty
+        let data = emulator.data();
+        assert_eq!(data.visible, b"");
+
+        // Exit alt screen
+        emulator.exit_alt_screen();
+        assert!(!emulator.is_alt_screen_active());
+}
     #[test]
     fn basic_color_tracker_test() {
         let mut format_tracker = FormatTracker::new();

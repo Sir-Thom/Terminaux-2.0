@@ -178,6 +178,8 @@ pub enum TerminalOutput {
     // ich (8.3.64 of ecma-48)
     InsertSpaces(usize),
     //SetCursorVisibility(bool),
+    EnterAltScreen,
+    ExitAltScreen,
 }
 
 fn mode_from_params(params: &[u8]) -> Mode {
@@ -433,12 +435,18 @@ impl AnsiParser {
                             self.inner = AnsiParserInner::Empty;
                         }
                         CsiParserState::Finished(b'h') => {
-                            output.push(TerminalOutput::SetMode(mode_from_params(&parser.params)));
+                            if parser.params == b"?1049" {
+                                output.push(TerminalOutput::EnterAltScreen);
+                            }else {
+                            output.push(TerminalOutput::SetMode(mode_from_params(&parser.params)));}
                             self.inner = AnsiParserInner::Empty;
                         }
                         CsiParserState::Finished(b'l') => {
+                            if parser.params == b"?1049" {
+                                output.push(TerminalOutput::ExitAltScreen);
+                            }else {
                             output
-                                .push(TerminalOutput::ResetMode(mode_from_params(&parser.params)));
+                                .push(TerminalOutput::ResetMode(mode_from_params(&parser.params)));}
                             self.inner = AnsiParserInner::Empty;
                         }
                         CsiParserState::Finished(b'P') => {
