@@ -180,6 +180,10 @@ pub enum TerminalOutput {
     //SetCursorVisibility(bool),
     EnterAltScreen,
     ExitAltScreen,
+    CursorUp(usize),
+    CursorDown(usize),
+    CursorForward(usize),
+    CursorBackward(usize),
 }
 
 fn mode_from_params(params: &[u8]) -> Mode {
@@ -544,7 +548,6 @@ impl AnsiParser {
                         }
 
                         CsiParserState::Finished(b'A') => {
-                            // Handle Cursor Up
                             let Ok(param) = parse_param_as_usize(&parser.params) else {
                                 warn!("Invalid cursor up sequence");
                                 output.push(TerminalOutput::Invalid);
@@ -552,11 +555,11 @@ impl AnsiParser {
                                 continue;
                             };
                             let lines = param.unwrap_or(1);
-                            // Implement cursor up logic here
+                            output.push(TerminalOutput::CursorUp(lines));
                             self.inner = AnsiParserInner::Empty;
                         }
                         CsiParserState::Finished(b'C') => {
-                            // Handle Cursor Forward
+                            // Cursor Forward
                             let Ok(param) = parse_param_as_usize(&parser.params) else {
                                 warn!("Invalid cursor forward sequence");
                                 output.push(TerminalOutput::Invalid);
@@ -564,7 +567,7 @@ impl AnsiParser {
                                 continue;
                             };
                             let columns = param.unwrap_or(1);
-                            // Implement cursor forward logic here
+                            output.push(TerminalOutput::CursorForward(columns));
                             self.inner = AnsiParserInner::Empty;
                         }
                         CsiParserState::Finished(b'h') => {
@@ -594,8 +597,20 @@ impl AnsiParser {
                             output.push(ret);
                             self.inner = AnsiParserInner::Empty;
                         }
+                        CsiParserState::Finished(b'B') => {
+                            // Cursor Down
+                            let Ok(param) = parse_param_as_usize(&parser.params) else {
+                                warn!("Invalid cursor down sequence");
+                                output.push(TerminalOutput::Invalid);
+                                self.inner = AnsiParserInner::Empty;
+                                continue;
+                            };
+                            let lines = param.unwrap_or(1);
+                            output.push(TerminalOutput::CursorDown(lines));
+                            self.inner = AnsiParserInner::Empty;
+                        }
                         CsiParserState::Finished(b'D') => {
-                            // Handle Cursor Backward
+                            // Cursor Backward
                             let Ok(param) = parse_param_as_usize(&parser.params) else {
                                 warn!("Invalid cursor backward sequence");
                                 output.push(TerminalOutput::Invalid);
@@ -603,7 +618,7 @@ impl AnsiParser {
                                 continue;
                             };
                             let columns = param.unwrap_or(1);
-                            // Implement cursor backward logic here
+                            output.push(TerminalOutput::CursorBackward(columns));
                             self.inner = AnsiParserInner::Empty;
                         }
                         CsiParserState::Finished(b'l') => {

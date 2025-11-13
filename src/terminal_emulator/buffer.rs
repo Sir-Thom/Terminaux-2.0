@@ -230,6 +230,9 @@ impl TerminalBuffer {
             }
 
         }
+    pub(crate) fn dimensions(&self) -> (usize, usize) {
+        (self.width, self.height)
+    }
     pub fn width(&self) -> usize {
         self.width
     }

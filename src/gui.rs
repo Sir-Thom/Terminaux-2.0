@@ -159,7 +159,7 @@ fn create_terminal_output_layout_job(
 ) -> (LayoutJob, TextFormat) {
     let text_style = &style.text_styles[&TextStyle::Monospace];
     let mut job = egui::text::LayoutJob::simple(
-        std::str::from_utf8(data).unwrap().to_string(),
+        String::from_utf8_lossy(data).to_string(),
         text_style.clone(),
         style.visuals.text_color(),
         width,
@@ -434,23 +434,21 @@ fn setup_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 fn add_terminal_data_to_ui(
-ui: &mut Ui,
-data: &[u8],
-format_data: &[FormatTag],
-font_size: f32,
+    ui: &mut Ui,
+    data: &[u8],
+    format_data: &[FormatTag],
+    font_size: f32,
 ) -> egui::Response {
     let (mut job, mut textformat) =
         create_terminal_output_layout_job(ui.style(), ui.available_width(), data);
 
-    let default_color = textformat.color;
+    let default_fg_color = textformat.color;
     let terminal_fonts = TerminalFonts::new();
-
     for tag in format_data {
         let mut range = tag.start..tag.end;
-        let color = tag.color;
 
         if range.end == usize::MAX {
-            range.end =  data.len();
+            range.end = data.len();
         }
 
         match range.start.cmp(&data.len()) {
@@ -464,9 +462,82 @@ font_size: f32,
             _ => (),
         }
 
-        textformat.font_id.family = terminal_fonts.get_family(tag.bold,tag.italic);
+        textformat.font_id.family = terminal_fonts.get_family(tag.bold, tag.italic);
         textformat.font_id.size = font_size;
-        textformat.color = terminal_color_to_egui(&default_color, &color);
+
+        // Apply foreground color
+        textformat.color = terminal_color_to_egui(&default_fg_color, &tag.fg_color);
+
+        // Apply background color
+        textformat.background = terminal_color_to_egui(&Color32::TRANSPARENT, &tag.bg_color);
+
+        job.sections.push(egui::text::LayoutSection {
+            leading_space: 0.0f32,
+            byte_range: range,
+            format: textformat.clone(),
+        });
+    }
+
+    ui.label(job)
+}
+fn add_terminal_data_to_ui_with_debug(
+    ui: &mut Ui,
+    data: &[u8],
+    format_data: &[FormatTag],
+    font_size: f32,
+) -> egui::Response {
+    // DEBUG: Print what we're receiving
+    for tag in format_data {
+        println!("Tag: {}..{}, fg={:?}, bg={:?}, bold={}, italic={}",
+                 tag.start, tag.end, tag.fg_color, tag.bg_color, tag.bold, tag.italic);
+    }
+    let mut debug_format_data: Vec<FormatTag> = format_data.to_vec(); // Copy existing tags
+
+    debug_format_data.push(FormatTag {
+        start: 0,
+        end: data.len(), // Apply to the whole chunk
+        fg_color: TerminalColor::ForegroundGreen,
+        bg_color: TerminalColor::BackgroundBlue,
+        bold: true,
+        italic: false,
+        blink: false,
+    });
+    let (mut job, mut textformat) =
+        create_terminal_output_layout_job(ui.style(), ui.available_width(), data);
+
+    let default_fg_color = textformat.color;
+    let terminal_fonts = TerminalFonts::new();
+
+    for tag in debug_format_data {
+        let mut range = tag.start..tag.end;
+
+        if range.end == usize::MAX {
+            range.end = data.len();
+        }
+
+        match range.start.cmp(&data.len()) {
+            std::cmp::Ordering::Greater => {
+                warn!("Invalid format data for text");
+                continue;
+            }
+            std::cmp::Ordering::Equal => {
+                continue;
+            }
+            _ => (),
+        }
+
+        textformat.font_id.family = terminal_fonts.get_family(tag.bold, tag.italic);
+        textformat.font_id.size = font_size;
+
+        // Apply foreground color
+        let fg = terminal_color_to_egui(&default_fg_color, &tag.fg_color);
+        textformat.color = fg;
+        println!("  Applied FG: {:?}", fg);
+
+        // Apply background color
+        let bg = terminal_color_to_egui(&Color32::TRANSPARENT, &tag.bg_color);
+        textformat.background = bg;
+        println!("  Applied BG: {:?}", bg);
 
         job.sections.push(egui::text::LayoutSection {
             leading_space: 0.0f32,

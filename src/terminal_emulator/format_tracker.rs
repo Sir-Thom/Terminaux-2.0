@@ -71,10 +71,11 @@ fn adjust_existing_format_range(
             ret.to_insert = Some(FormatTag {
                 start: range.end,
                 end: existing_elem.end,
-                color: existing_elem.color,
+                fg_color: existing_elem.fg_color,  // Changed
+                bg_color: existing_elem.bg_color,  // Changed
                 bold: existing_elem.bold,
                 italic: existing_elem.italic,
-                blink:existing_elem.blink,
+                blink: existing_elem.blink,
             });
         }
 
@@ -141,7 +142,8 @@ pub struct FormatTag {
     pub start: usize,
     pub end: usize,
     pub blink: bool,
-    pub color: TerminalColor,
+    pub fg_color: TerminalColor,  // Changed from 'color'
+    pub bg_color: TerminalColor,  // Added
     pub bold: bool,
     pub italic: bool,
 }
@@ -156,7 +158,8 @@ impl FormatTracker {
             color_info: vec![FormatTag {
                 start: 0,
                 end: usize::MAX,
-                color: TerminalColor::Default,
+                fg_color: TerminalColor::Default,  // Changed
+                bg_color: TerminalColor::Default,  // Added
                 bold: false,
                 italic: false,
                 blink: false,
@@ -168,12 +171,14 @@ impl FormatTracker {
         self.color_info = vec![FormatTag {
             start: 0,
             end: usize::MAX,
-            color: TerminalColor::Default,
+            fg_color: TerminalColor::Default,  // Changed
+            bg_color: TerminalColor::Default,  // Added
             bold: false,
             italic: false,
             blink: false,
         }];
     }
+
     /// Move all tags > range.start to range.start + range.len
     /// No gaps in coloring data, so one range must expand instead of just be adjusted
     pub fn push_range_adjustment(&mut self, range: Range<usize>) {
@@ -200,7 +205,8 @@ impl FormatTracker {
         self.color_info.push(FormatTag {
             start: range.start,
             end: range.end,
-            color: cursor.color,
+            fg_color: cursor.fg_color,  // Changed
+            bg_color: cursor.bg_color,  // Changed
             bold: cursor.bold,
             italic: cursor.italic,
             blink: cursor.blink_mode != BlinkMode::NoBlink,
